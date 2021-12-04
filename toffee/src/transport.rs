@@ -2,18 +2,23 @@ use base64;
 use std::io::{self, Write};
 use twoway;
 
-use super::constants::*;
+pub struct TransportConfig<'a> {
+    pub prefix: &'a [u8],
+    pub suffix: &'a [u8],
+}
 
 pub struct TransportReader<'a> {
+    config: TransportConfig<'a>,
     buffer: Vec<u8>,
-    callback: Box<dyn Fn(&[u8]) -> () + Send + 'a>,
+    callback: Box<dyn FnMut(&[u8]) -> () + Send + 'a>,
     in_sequence: bool,
 }
 
 impl<'a> TransportReader<'a> {
-    pub fn new(callback: impl Fn(&[u8]) -> () + Send + 'a) -> Self {
+    pub fn new(config: TransportConfig<'a>, callback: impl FnMut(&[u8]) -> () + Send + 'a) -> Self {
         Self {
             buffer: vec![],
+            config: config,
             callback: Box::new(callback),
             in_sequence: false,
         }
@@ -28,10 +33,10 @@ impl<'a> TransportReader<'a> {
         }
 
         loop {
-            match twoway::find_bytes(remaining_data, PREFIX) {
+            match twoway::find_bytes(remaining_data, self.config.prefix) {
                 Some(start_index) => {
                     views.push(&remaining_data[..start_index]);
-                    remaining_data = &remaining_data[start_index + PREFIX.len()..];
+                    remaining_data = &remaining_data[start_index + self.config.prefix.len()..];
                     remaining_data = self.feed_remainder(remaining_data);
                 }
                 None => {
@@ -45,14 +50,14 @@ impl<'a> TransportReader<'a> {
     }
 
     fn feed_remainder<'b>(&mut self, data: &'b [u8]) -> &'b [u8] {
-        match twoway::find_bytes(&data, SUFFIX) {
+        match twoway::find_bytes(&data, self.config.suffix) {
             Some(length) => {
                 let encoded_packet = &data[..length];
                 if let Some(packet) = base64::decode(encoded_packet).ok() {
                     (self.callback)(&packet);
                 }
                 self.in_sequence = false;
-                return &data[length + SUFFIX.len()..];
+                return &data[length + self.config.suffix.len()..];
             }
             None => {
                 self.in_sequence = true;
@@ -63,19 +68,24 @@ impl<'a> TransportReader<'a> {
     }
 }
 
-pub struct TransportWriter<'a> {
-    stream: &'a mut dyn Write,
+pub struct TransportWriter<'a, T> {
+    config: TransportConfig<'a>,
+    stream: T,
 }
 
-impl<'a> TransportWriter<'a> {
-    pub fn new(stream: &'a mut dyn Write) -> Self {
-        Self { stream }
+impl<'a, T> TransportWriter<'a, T>
+where
+    T: Write,
+{
+    pub fn new(config: TransportConfig<'a>, stream: T) -> Self {
+        Self { config, stream }
     }
 
     pub fn write(&mut self, data: &[u8]) -> io::Result<()> {
-        self.stream.write_all(PREFIX)?;
+        self.stream.write_all(self.config.prefix)?;
         self.stream.write_all(base64::encode(data).as_bytes())?;
-        self.stream.write_all(SUFFIX)?;
+        self.stream.write_all(self.config.suffix)?;
+        self.stream.flush()?;
         Ok(())
     }
 }

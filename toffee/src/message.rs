@@ -1,17 +1,20 @@
 use prost::Message;
-use std::io;
+use std::io::{self, Write};
 
 use super::api::{self, message::Content};
-use super::transport::{TransportReader, TransportWriter};
+use super::transport::{TransportConfig, TransportReader, TransportWriter};
 
 pub struct MessageReader<'a> {
     reader: TransportReader<'a>,
 }
 
 impl<'a> MessageReader<'a> {
-    pub fn new(callback: impl Fn(Content) -> () + Send + 'a) -> Self {
+    pub fn new(
+        config: TransportConfig<'a>,
+        mut callback: impl FnMut(Content) -> () + Send + 'a,
+    ) -> Self {
         Self {
-            reader: TransportReader::new(move |data| {
+            reader: TransportReader::new(config, move |data| {
                 if let Some(msg) = api::Message::decode(data).ok() {
                     if let Some(content) = msg.content {
                         callback(content);
@@ -26,12 +29,15 @@ impl<'a> MessageReader<'a> {
     }
 }
 
-pub struct MessageWriter<'a> {
-    writer: TransportWriter<'a>,
+pub struct MessageWriter<'a, T> {
+    writer: TransportWriter<'a, T>,
 }
 
-impl<'a> MessageWriter<'a> {
-    pub fn new(writer: TransportWriter<'a>) -> Self {
+impl<'a, T> MessageWriter<'a, T>
+where
+    T: Write,
+{
+    pub fn new(writer: TransportWriter<'a, T>) -> Self {
         Self { writer }
     }
 

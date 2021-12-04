@@ -13,6 +13,7 @@ twoway = "0.2"
 prost = { version = "0.9", features = ["std"] }
 prost-types = "0.9"
 base64="0.13"
+rust-fsm = { version = "0.6", default-features = false }
 
 [lib]
 name = "toffee"

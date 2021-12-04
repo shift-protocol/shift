@@ -11,9 +11,12 @@ message ServerInit {
     repeated string features = 2;
 }
 
+message Disconnect { }
+
 message Message {
     oneof content {
         ClientInit clientInit = 1;
         ServerInit serverInit = 2;
+        Disconnect disconnect = 3;
     }
 }

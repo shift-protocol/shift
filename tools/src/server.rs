@@ -5,15 +5,12 @@ use std::process::{Command, Stdio};
 use std::thread;
 use termios::{self, Termios};
 
-use toffee::MessageReader;
+use toffee::api::message::Content;
+use toffee::{MessageReader, MessageWriter, TransportWriter, CLIENT_TRANSPORT, SERVER_TRANSPORT};
 
 fn main() {
     let mut stdin = io::stdin();
     let mut stdout = io::stdout();
-
-    let mut message_reader = MessageReader::new(|data| {
-        println!("Packet: {:?}", data);
-    });
 
     let fork = Fork::from_ptmx().unwrap();
 
@@ -55,21 +52,30 @@ fn main() {
     let mut master_read = fork.is_parent().ok().unwrap();
     let mut master_write = master_read.clone();
 
+    let mut message_writer =
+        MessageWriter::new(TransportWriter::new(SERVER_TRANSPORT, master_write));
+    let mut message_reader = MessageReader::new(CLIENT_TRANSPORT, move |data| {
+        println!("Packet: {:?}", data);
+        if let Content::ClientInit(init) = data {
+            println!("Server: got client init ver: {:?}", init.version);
+            message_writer
+                .write(Content::ServerInit(toffee::api::ServerInit {
+                    version: 1,
+                    features: vec![],
+                }))
+                .unwrap();
+        }
+    });
+
     thread::spawn(move || {
         let mut buf = [0; 1024];
         loop {
-            match stdin.read(&mut buf) {
-                Ok(size) => {
-                    if size == 0 {
-                        break;
-                    }
-                    if master_write.write(&buf[..size]).is_err() {
-                        break;
-                    }
-                }
-                Err(e) => {
-                    panic!("read error: {}", e);
-                }
+            let size = stdin.read(&mut buf).expect("read error");
+            if size == 0 {
+                break;
+            }
+            if master_write.write(&buf[..size]).is_err() {
+                break;
             }
         }
     });

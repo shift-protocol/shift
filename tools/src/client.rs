@@ -1,15 +1,28 @@
-use std::io;
+use std::io::{self, Read};
 use toffee::api::message::Content;
-use toffee::MessageWriter;
-use toffee::TransportWriter;
+use toffee::{MessageReader, MessageWriter, TransportWriter, CLIENT_TRANSPORT, SERVER_TRANSPORT};
 
 fn main() {
-    let mut stream = io::stdout();
-    let mut tl = MessageWriter::new(TransportWriter::new(&mut stream));
+    let mut stdin = io::stdin();
+    let mut stdout = io::stdout();
+
+    let mut writer = MessageWriter::new(TransportWriter::new(CLIENT_TRANSPORT, &mut stdout));
+    let mut reader = MessageReader::new(SERVER_TRANSPORT, |data| {
+        println!("Client: packet: {:?}", data);
+    });
 
     let x = Content::ClientInit(toffee::api::ClientInit {
         version: 1,
         features: vec![],
     });
-    tl.write(x).unwrap();
+    writer.write(x).unwrap();
+
+    let mut buf = [0; 1024];
+    loop {
+        let size = stdin.read(&mut buf).expect("read error");
+        if size == 0 {
+            break;
+        }
+        reader.feed(&buf[0..size]);
+    }
 }
