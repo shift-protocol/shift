@@ -1,0 +1,19 @@
+syntax = "proto3";
+package file_transfer;
+
+message ClientInit {
+    uint32 version = 1;
+    repeated string features = 2;
+}
+
+message ServerInit {
+    uint32 version = 1;
+    repeated string features = 2;
+}
+
+message Message {
+    oneof content {
+        ClientInit clientInit = 1;
+        ServerInit serverInit = 2;
+    }
+}

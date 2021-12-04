@@ -1,0 +1,18 @@
+[package]
+name = "tools"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+toffee = { path = "../toffee" }
+pty = "0.2"
+termios = "0.3"
+ctrlc="3.2"
+
+[[bin]]
+name = "server"
+path = "src/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"

@@ -1,0 +1,18 @@
+# cargo-features = ["strip"]
+
+[package]
+name = "toffee"
+version = "0.1.0"
+edition = "2018"
+
+[build-dependencies]
+prost-build="0.9"
+
+[dependencies]
+twoway = "0.2"
+prost = { version = "0.9", features = ["std"] }
+prost-types = "0.9"
+base64="0.13"
+
+[lib]
+name = "toffee"

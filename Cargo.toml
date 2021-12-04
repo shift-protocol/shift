@@ -1,23 +1,8 @@
-# cargo-features = ["strip"]
-
-[package]
-name = "toffee"
-version = "0.1.0"
-edition = "2018"
-
-[dependencies]
-twoway = "0.2.2"
-pty = "0.2"
-termios = "0.3"
-ctrlc="*"
-
-[[bin]]
-name = "server"
-path = "src/server.rs"
-
-[[bin]]
-name = "client"
-path = "src/client.rs"
+[workspace]
+members = [
+    "toffee",
+    "tools",
+]
 
 [profile.release]
 # strip = true
