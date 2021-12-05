@@ -49,53 +49,61 @@ fn main() {
     })
     .unwrap();
 
-    let mut master_read = fork.is_parent().ok().unwrap();
-    let mut master_write = master_read.clone();
+    let master = fork.is_parent().ok().unwrap();
 
-    let mut message_writer =
-        MessageWriter::new(TransportWriter::new(SERVER_TRANSPORT, master_write));
-    let mut message_reader = MessageReader::new(CLIENT_TRANSPORT, move |data| {
-        println!("Packet: {:?}", data);
-        if let Content::ClientInit(init) = data {
-            println!("Server: got client init ver: {:?}", init.version);
-            message_writer
-                .write(Content::ServerInit(toffee::api::ServerInit {
-                    version: 1,
-                    features: vec![],
-                }))
-                .unwrap();
-        }
-    });
-
-    thread::spawn(move || {
-        let mut buf = [0; 1024];
-        loop {
-            let size = stdin.read(&mut buf).expect("read error");
-            if size == 0 {
-                break;
-            }
-            if master_write.write(&buf[..size]).is_err() {
-                break;
-            }
-        }
-    });
-
-    let reader = thread::spawn(move || {
-        let mut buf = [0; 1024];
-        loop {
-            match master_read.read(&mut buf) {
-                Ok(size) => {
-                    if size == 0 {
-                        break;
-                    }
-                    for part in message_reader.feed(&buf[..size]) {
-                        if part.len() > 0 {
-                            stdout.write(part).unwrap();
-                        }
-                    }
-                    stdout.flush().unwrap();
+    thread::spawn({
+        let mut master = master.clone();
+        move || {
+            let mut buf = [0; 1024];
+            loop {
+                let size = stdin.read(&mut buf).expect("read error");
+                if size == 0 {
+                    break;
                 }
-                Err(_) => break,
+                if master.write(&buf[..size]).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+
+    let reader = thread::spawn({
+        let mut master = master.clone();
+        let mut message_writer =
+            MessageWriter::new(TransportWriter::new(SERVER_TRANSPORT, Box::new(master)));
+
+        let mut message_reader = MessageReader::new(CLIENT_TRANSPORT, {
+            move |data| {
+                println!("Packet: {:?}", data);
+                if let Content::ClientInit(init) = data {
+                    println!("Server: got client init ver: {:?}", init.version);
+                    message_writer
+                        .write(Content::ServerInit(toffee::api::ServerInit {
+                            version: 1,
+                            features: vec![],
+                        }))
+                        .unwrap();
+                }
+            }
+        });
+
+        move || {
+            let mut buf = [0; 1024];
+            loop {
+                match master.read(&mut buf) {
+                    Ok(size) => {
+                        if size == 0 {
+                            break;
+                        }
+                        for part in message_reader.feed(&buf[..size]) {
+                            if part.len() > 0 {
+                                stdout.write(part).unwrap();
+                            }
+                        }
+                        stdout.flush().unwrap();
+                    }
+                    Err(_) => break,
+                }
             }
         }
     });

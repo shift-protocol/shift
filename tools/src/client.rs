@@ -4,9 +4,9 @@ use toffee::{MessageReader, MessageWriter, TransportWriter, CLIENT_TRANSPORT, SE
 
 fn main() {
     let mut stdin = io::stdin();
-    let mut stdout = io::stdout();
+    let stdout = io::stdout();
 
-    let mut writer = MessageWriter::new(TransportWriter::new(CLIENT_TRANSPORT, &mut stdout));
+    let mut writer = MessageWriter::new(TransportWriter::new(CLIENT_TRANSPORT, Box::new(stdout)));
     let mut reader = MessageReader::new(SERVER_TRANSPORT, |data| {
         println!("Client: packet: {:?}", data);
     });

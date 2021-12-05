@@ -1,5 +1,5 @@
 use prost::Message;
-use std::io::{self, Write};
+use std::io;
 
 use super::api::{self, message::Content};
 use super::transport::{TransportConfig, TransportReader, TransportWriter};
@@ -29,15 +29,12 @@ impl<'a> MessageReader<'a> {
     }
 }
 
-pub struct MessageWriter<'a, T> {
-    writer: TransportWriter<'a, T>,
+pub struct MessageWriter<'a> {
+    writer: TransportWriter<'a>,
 }
 
-impl<'a, T> MessageWriter<'a, T>
-where
-    T: Write,
-{
-    pub fn new(writer: TransportWriter<'a, T>) -> Self {
+impl<'a> MessageWriter<'a> {
+    pub fn new(writer: TransportWriter<'a>) -> Self {
         Self { writer }
     }
 

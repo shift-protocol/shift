@@ -2,6 +2,7 @@ use base64;
 use std::io::{self, Write};
 use twoway;
 
+#[derive(Clone)]
 pub struct TransportConfig<'a> {
     pub prefix: &'a [u8],
     pub suffix: &'a [u8],
@@ -68,17 +69,17 @@ impl<'a> TransportReader<'a> {
     }
 }
 
-pub struct TransportWriter<'a, T> {
+pub struct TransportWriter<'a> {
     config: TransportConfig<'a>,
-    stream: T,
+    stream: Box<dyn Write + Send + 'a>,
 }
 
-impl<'a, T> TransportWriter<'a, T>
-where
-    T: Write,
-{
-    pub fn new(config: TransportConfig<'a>, stream: T) -> Self {
-        Self { config, stream }
+impl<'a> TransportWriter<'a> {
+    pub fn new(config: TransportConfig<'a>, stream: Box<dyn Write + Send>) -> Self {
+        Self {
+            config,
+            stream,
+        }
     }
 
     pub fn write(&mut self, data: &[u8]) -> io::Result<()> {
