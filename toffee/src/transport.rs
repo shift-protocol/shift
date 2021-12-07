@@ -1,6 +1,8 @@
 use base64;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use twoway;
+use bytes::{Bytes, BytesMut};
+use cancellation::*;
 
 #[derive(Clone)]
 pub struct TransportConfig<'a> {
@@ -11,61 +13,133 @@ pub struct TransportConfig<'a> {
 pub struct TransportReader<'a> {
     config: TransportConfig<'a>,
     buffer: Vec<u8>,
-    callback: Box<dyn FnMut(&[u8]) -> () + Send + 'a>,
     in_sequence: bool,
 }
 
+#[derive(Debug)]
+pub enum TransportOutput {
+    Passthrough(Bytes),
+    Packet(Bytes),
+}
+
+pub struct TransportFeeder<'a> {
+    reader: &'a mut TransportReader<'a>,
+    stream: &'a mut dyn Read,
+    data_buffer: [u8; 1024 * 512],
+    result_buffer: Vec<TransportOutput>,
+    ct: &'a CancellationToken,
+}
+
+impl<'a> TransportFeeder<'a> {
+    pub fn new(reader: &'a mut TransportReader<'a>, stream: &'a mut dyn Read, ct: &'a CancellationToken) -> Self {
+        Self {
+            reader,
+            stream,
+            data_buffer: [0; 1024 * 512],
+            result_buffer: Vec::new(),
+            ct,
+        }
+    }
+}
+
+impl<'a> Iterator for TransportFeeder<'a> {
+    type Item = TransportOutput;
+
+    fn next(&mut self) -> Option<TransportOutput> {
+        if let None = self.ct.result().ok() {
+            return None
+        }
+        while self.result_buffer.len() == 0 {
+            let size = self.stream.read(&mut self.data_buffer).expect("read error");
+            if size == 0 {
+                return None
+            }
+            self.result_buffer.append(&mut self.reader.feed(&self.data_buffer[..size]));
+        }
+
+        if self.result_buffer.len() == 0 {
+            return None
+        }
+
+        Some(self.result_buffer.remove(0))
+    }
+}
+
+
 impl<'a> TransportReader<'a> {
-    pub fn new(config: TransportConfig<'a>, callback: impl FnMut(&[u8]) -> () + Send + 'a) -> Self {
+    pub fn new(config: TransportConfig<'a>) -> Self {
         Self {
             buffer: vec![],
-            config: config,
-            callback: Box::new(callback),
+            config,
             in_sequence: false,
         }
     }
 
-    pub fn feed<'b>(&mut self, data: &'b [u8]) -> Vec<&'b [u8]> {
-        let mut views = Vec::new();
-        let mut remaining_data = data;
+    pub fn feed_from(&'a mut self, stream: &'a mut dyn Read, ct: &'a CancellationToken) -> TransportFeeder<'a> {
+        return TransportFeeder::new(self, stream, ct)
+    }
+
+    pub fn feed(&mut self, data: &[u8]) -> Vec<TransportOutput> {
+        let mut remaining_data = Bytes::from(BytesMut::from(data));
+        let mut result = vec![];
 
         if self.in_sequence {
-            remaining_data = self.feed_remainder(remaining_data);
+            for part in self.feed_remainder(&remaining_data) {
+                match part {
+                    TransportOutput::Packet(_) => {
+                        result.push(part);
+                    }
+                    TransportOutput::Passthrough(data) => {
+                        remaining_data = data;
+                    }
+                }
+            }
         }
 
         loop {
-            match twoway::find_bytes(remaining_data, self.config.prefix) {
+            match twoway::find_bytes(&remaining_data, self.config.prefix) {
                 Some(start_index) => {
-                    views.push(&remaining_data[..start_index]);
-                    remaining_data = &remaining_data[start_index + self.config.prefix.len()..];
-                    remaining_data = self.feed_remainder(remaining_data);
+                    result.push(TransportOutput::Passthrough(remaining_data.slice(..start_index).clone()));
+                    remaining_data = remaining_data.slice(start_index + self.config.prefix.len()..);
+
+                    for part in self.feed_remainder(&remaining_data) {
+                        match part {
+                            TransportOutput::Packet(_) => {
+                                result.push(part);
+                            }
+                            TransportOutput::Passthrough(data) => {
+                                remaining_data = data;
+                            }
+                        }
+                    }
                 }
                 None => {
-                    views.push(&remaining_data[..]);
+                    result.push(TransportOutput::Passthrough(remaining_data));
                     break;
                 }
             }
         }
 
-        views
+        result
     }
 
-    fn feed_remainder<'b>(&mut self, data: &'b [u8]) -> &'b [u8] {
-        match twoway::find_bytes(&data, self.config.suffix) {
+    fn feed_remainder(&mut self, data: &Bytes) -> Vec<TransportOutput> {
+        let mut result: Vec<TransportOutput> = vec![];
+        match twoway::find_bytes(data, self.config.suffix) {
             Some(length) => {
                 let encoded_packet = &data[..length];
                 if let Some(packet) = base64::decode(encoded_packet).ok() {
-                    (self.callback)(&packet);
+                    result.push(TransportOutput::Packet(Bytes::from(packet)));
                 }
                 self.in_sequence = false;
-                return &data[length + self.config.suffix.len()..];
+                result.push(TransportOutput::Passthrough(data.slice(length + self.config.suffix.len()..)));
             }
             None => {
                 self.in_sequence = true;
                 self.buffer.extend_from_slice(&data);
-                return &[];
             }
         }
+        result
     }
 }
 

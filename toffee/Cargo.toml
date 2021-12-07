@@ -14,6 +14,9 @@ prost = { version = "0.9", features = ["std"] }
 prost-types = "0.9"
 base64="0.13"
 rust-fsm = { version = "0.6", default-features = false, features = ["std"] }
+termios = "0.3"
+cancellation = "0.1.0"
+bytes = "1.1.0"
 
 [lib]
 name = "toffee"

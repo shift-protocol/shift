@@ -1,10 +1,12 @@
 use rust_fsm::{StateMachine, StateMachineImpl};
 use super::api::{self, message::Content};
-use super::message::{MessageReader, MessageWriter};
+use super::message::MessageWriter;
 
 pub enum Input {
     Start,
-    Message(Content),
+    IncomingMessage(Content),
+    RequestInboundTransfer(api::InboundTransferRequest),
+    RequestOutboundTransfer(api::OutboundTransferRequest),
     Disconnect,
 }
 
@@ -29,73 +31,111 @@ impl StateMachineImpl for ClientMachineMachine {
     type Input = Input;
     type State = State;
     type Output = Output;
-    const INITIAL_STATE: Self::State = State::Connecting;
+    const INITIAL_STATE: Self::State = State::Initial;
 
     fn transition(state: &Self::State, input: &Self::Input) -> Option<Self::State> {
         match (state, input) {
             (State::Initial, Input::Start) => Some(State::Connecting),
-            (State::Connecting, Input::Message(Content::ServerInit(msg))) => {
+            (State::Initial, Input::IncomingMessage(Content::Init(_))) => {
                 Some(State::Idle)
             },
-            (_, Input::Disconnect) => {
+            (State::Connecting, Input::IncomingMessage(Content::Init(_))) => {
+                Some(State::Idle)
+            },
+            (State::Idle, Input::RequestInboundTransfer(_)) => Some(State::Idle),
+            (State::Idle, Input::IncomingMessage(Content::Disconnect(_))) => {
                 Some(State::Disconnected)
             },
+            (_, Input::Disconnect) => Some(State::Disconnected),
             _ => None,
         }
     }
 
     fn output(state: &Self::State, input: &Self::Input) -> Option<Self::Output> {
         match (state, input) {
+            (State::Initial, Input::IncomingMessage(Content::Init(_))) |
             (State::Initial, Input::Start) => {
-                Some(Output::Message(Content::ClientInit(api::ClientInit {
+                Some(Output::Message(Content::Init(api::Init {
                     version: 1,
                     features: vec![],
                 })))
+            },
+            (State::Idle, Input::RequestInboundTransfer(request)) =>{
+                Some(Output::Message(Content::InboundTransferRequest(request.clone())))
+            },
+            (_, Input::Disconnect) => {
+                Some(Output::Message(Content::Disconnect(api::Disconnect { })))
             },
             _ => None
         }
     }
 }
 
-pub struct Client {
+pub struct Client<'a> {
     machine: StateMachine<ClientMachineMachine>,
+    writer: MessageWriter<'a>
 }
 
 pub enum ClientResult {
-    Message(Content),
     Busy,
     Idle,
     Disconnected,
 }
 
-impl Client {
-    pub fn new() -> Self {
+pub type Error = Box<dyn std::error::Error>;
+
+impl<'a> Client<'a> {
+    pub fn new(writer: MessageWriter<'a>) -> Self {
         Client {
             machine: StateMachine::new(),
+            writer,
         }
     }
 
-    pub fn feed_message(&mut self, msg: Content) -> Result<ClientResult, Box<dyn std::error::Error>> {
-        let output = self.machine.consume(&Input::Message(msg))?;
+    pub fn start(&mut self) -> Result<ClientResult, Error> {
+        let output = self.machine.consume(&Input::Start);
+        self.map_output(output.unwrap())
+    }
+
+    fn map_output(&mut self, output: Option<Output>) -> Result<ClientResult, Error> {
         match output {
             Some(Output::Message(msg)) => {
-                return Ok(ClientResult::Message(msg));
+                self.writer.write(msg)?;
             },
             None => {
-                match self.machine.state() {
-                    State::Disconnected => {
-                        return Ok(ClientResult::Disconnected),
-                    },
-                    State::Idle => {
-                        return Ok(ClientResult::Idle),
-                    },
-                    _ => {
-                        return Ok(ClientResult::Busy);
-                    }
-                }
             },
         }
-        Ok(ClientResult::Busy)
+        match self.machine.state() {
+            State::Disconnected => {
+                return Ok(ClientResult::Disconnected)
+            },
+            State::Idle => {
+                return Ok(ClientResult::Idle)
+            },
+            _ => {
+                return Ok(ClientResult::Busy)
+            }
+        }
+    }
+
+    pub fn disconnect(&mut self) -> Result<ClientResult, Error> {
+        let output = self.machine.consume(&Input::Disconnect).unwrap();
+        return self.map_output(output);
+    }
+
+    pub fn feed_message(&mut self, msg: Content) -> Result<ClientResult, Error> {
+        let output = self.machine.consume(&Input::IncomingMessage(msg))?;
+        return self.map_output(output);
+    }
+
+    pub fn request_inbound_transfer(&mut self, request: api::InboundTransferRequest) -> Result<ClientResult, Error> {
+        let output = self.machine.consume(&Input::RequestInboundTransfer(request))?;
+        return self.map_output(output);
+    }
+
+    pub fn request_outbound_transfer(&mut self, request: api::OutboundTransferRequest) -> Result<ClientResult, Error> {
+        let output = self.machine.consume(&Input::RequestOutboundTransfer(request))?;
+        return self.map_output(output);
     }
 }
 
