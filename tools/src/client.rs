@@ -62,6 +62,7 @@ impl<'a> App<'a> {
                     // let result = self.client.borrow_mut().disconnect().unwrap();
                     println!("[{}]: {}", self.name, "Requesting file".green());
                     let result = self.client.borrow_mut().request_inbound_transfer(api::InboundTransferRequest {
+                        id: "123".to_string(),
                         file_info: Some(api::FileInfo {
                             name: "test.txt".to_string(),
                             size: 3,
@@ -72,6 +73,9 @@ impl<'a> App<'a> {
                     self.process_result(result);
                 }
             },
+            other => {
+                panic!("Unexpected result: {:?}", other);
+            }
         };
     }
 

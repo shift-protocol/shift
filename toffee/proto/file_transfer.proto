@@ -13,12 +13,22 @@ message FileInfo {
 }
 
 message OutboundTransferRequest {
-    bool allowDirectories = 1;
-    bool allowMultiple = 2;
+    string id = 1;
+    bool allowDirectories = 2;
+    bool allowMultiple = 3;
 }
 
 message InboundTransferRequest {
-    FileInfo fileInfo = 1;
+    string id = 1;
+    FileInfo fileInfo = 2;
+}
+
+message AcceptTransfer {
+    string id = 1;
+}
+
+message RejectTransfer {
+    string id = 1;
 }
 
 message Disconnect { }
@@ -29,5 +39,7 @@ message Message {
         Disconnect disconnect = 2;
         OutboundTransferRequest outboundTransferRequest = 3;
         InboundTransferRequest inboundTransferRequest = 4;
+        AcceptTransfer acceptTransfer = 5;
+        RejectTransfer rejectTransfer = 6;
     }
 }
