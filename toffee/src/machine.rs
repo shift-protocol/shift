@@ -1,8 +1,7 @@
-use rust_fsm::{StateMachine, StateMachineImpl};
 use super::api::{self, message::Content};
 use super::message::MessageWriter;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Input {
     Start,
     IncomingMessage(Content),
@@ -11,10 +10,6 @@ pub enum Input {
     RejectTransfer,
     RequestOutboundTransfer(api::OutboundTransferRequest),
     Disconnect,
-}
-
-pub enum Output {
-    Message(Content),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -31,193 +26,176 @@ pub enum State {
     Disconnected,
 }
 
-#[derive(Debug)]
-pub struct ClientStateMachine {
-}
-
-impl StateMachineImpl for ClientStateMachine {
-    type Input = Input;
-    type State = State;
-    type Output = Output;
-    const INITIAL_STATE: Self::State = State::Initial;
-
-    fn transition(state: &Self::State, input: &Self::Input) -> Option<Self::State> {
-        match (state, input) {
-            (State::Initial, Input::Start) => Some(State::Connecting),
-
-            (State::Initial, Input::IncomingMessage(Content::Init(_))) => {
-                Some(State::Idle)
-            },
-
-            (State::Connecting, Input::IncomingMessage(Content::Init(_))) => {
-                Some(State::Idle)
-            },
-
-            (State::Idle, Input::IncomingMessage(Content::Disconnect(_))) => {
-                Some(State::Disconnected)
-            },
-
-            (_, Input::Disconnect) => Some(State::Disconnected),
-
-            // Server transfer negotiation
-            (State::Idle, Input::IncomingMessage(Content::InboundTransferRequest(transfer))) => {
-                Some(State::InboundTransferOffered(transfer.clone()))
-            },
-
-            (State::InboundTransferOffered(transfer), Input::AcceptTransfer) => {
-                Some(State::InboundTransferInProgress(transfer.clone()))
-            },
-
-            (State::InboundTransferOffered(_), Input::RejectTransfer) => {
-                Some(State::Idle)
-            },
-
-            // Client transfer negotiation
-            (State::Idle, Input::RequestInboundTransfer(transfer)) => {
-                Some(State::InboundTransferRequested(transfer.clone()))
-            },
-
-            (State::InboundTransferRequested(requestedTransfer), Input::IncomingMessage(Content::AcceptTransfer(acceptedTransfer))) => {
-                if requestedTransfer.id == acceptedTransfer.id {
-                    Some(State::InboundTransferInProgress(requestedTransfer.clone()))
-                } else {
-                    Some(state.clone())
-                }
-            },
-
-            (State::InboundTransferRequested(requestedTransfer), Input::IncomingMessage(Content::RejectTransfer(rejectedTransfer))) => {
-                if requestedTransfer.id == rejectedTransfer.id {
-                    Some(State::Idle)
-                } else {
-                    Some(state.clone())
-                }
-            },
-
-            _ => {
-                println!("Machine: invalid input for {:?}: {:?}", state, input);
-                None
-            },
-        }
-    }
-
-    fn output(state: &Self::State, input: &Self::Input) -> Option<Self::Output> {
-        match (state, input) {
-            (State::Initial, Input::IncomingMessage(Content::Init(_))) |
-            (State::Initial, Input::Start) => {
-                Some(Output::Message(Content::Init(api::Init {
-                    version: 1,
-                    features: vec![],
-                })))
-            },
-
-            // Server transfer negotiation
-            (State::InboundTransferOffered(transfer), Input::AcceptTransfer) => {
-                Some(Output::Message(Content::AcceptTransfer(api::AcceptTransfer { id: transfer.id.clone() })))
-            },
-
-            (State::InboundTransferOffered(transfer), Input::RejectTransfer) => {
-                Some(Output::Message(Content::RejectTransfer(api::RejectTransfer { id: transfer.id.clone() })))
-            },
-
-            // Client transfer negotiation
-            (State::Idle, Input::RequestInboundTransfer(transfer)) => {
-                Some(Output::Message(Content::InboundTransferRequest(transfer.clone())))
-            },
-
-            // ---
-
-            (_, Input::Disconnect) => {
-                Some(Output::Message(Content::Disconnect(api::Disconnect { })))
-            },
-            _ => None
-        }
-    }
-}
-
 pub struct Client<'a> {
-    machine: StateMachine<ClientStateMachine>,
-    writer: MessageWriter<'a>
+    events: Vec<ClientEvent>,
+    state: State,
+    writer: MessageWriter<'a>,
 }
 
 #[derive(Debug)]
-pub enum ClientResult {
-    Busy,
-    Idle,
-    Disconnected,
-    InboundTransferOffered(api::InboundTransferRequest),
-    OutboundTransferOffered(api::OutboundTransferRequest),
+pub struct ClientError {
+    pub io_error: Option<std::io::Error>,
+    pub state: Option<State>,
+    pub input: Option<Input>,
 }
 
-pub type Error = Box<dyn std::error::Error>;
+impl From<std::io::Error> for ClientError {
+    fn from(error: std::io::Error) -> Self {
+        ClientError {
+            io_error: Some(error),
+            state: None,
+            input: None,
+        }
+    }
+}
+
+pub type ClientResult = Result<(), ClientError>;
 
 impl<'a> Client<'a> {
     pub fn new(writer: MessageWriter<'a>) -> Self {
         Client {
-            machine: StateMachine::new(),
+            events: vec![],
+            state: State::Initial,
             writer,
         }
     }
 
-    pub fn start(&mut self) -> Result<ClientResult, Error> {
-        let output = self.machine.consume(&Input::Start);
-        self.map_output(output.unwrap())
+    fn transition(&mut self, state: State) {
+        self.state = state;
+        println!("machine now in {:?}", self.state);
     }
 
-    fn map_output(&mut self, output: Option<Output>) -> Result<ClientResult, Error> {
-        println!("machine now in {:?}", self.machine.state());
-        match output {
-            Some(Output::Message(msg)) => {
-                self.writer.write(msg)?;
+    fn push_event(&mut self, event: ClientEvent) {
+        println!("machine event: {:?}", event);
+        self.events.push(event);
+    }
+
+    fn consume(&mut self, input: &Input) -> Result<(), ClientError> {
+        println!("machine input: {:?}", input);
+        match (&self.state, input) {
+            (State::Initial, Input::Start) => {
+                self.writer.write(Content::Init(api::Init {
+                    version: 1,
+                    features: vec![],
+                }))?;
+                self.transition(State::Connecting);
             },
-            None => {
+
+            (State::Initial, Input::IncomingMessage(Content::Init(_))) => {
+                self.writer.write(Content::Init(api::Init {
+                    version: 1,
+                    features: vec![],
+                }))?;
+                self.push_event(ClientEvent::Connected);
+                self.transition(State::Idle);
             },
-        }
-        match self.machine.state() {
-            State::Disconnected => {
-                return Ok(ClientResult::Disconnected)
+
+            (State::Connecting, Input::IncomingMessage(Content::Init(_))) => {
+                self.push_event(ClientEvent::Connected);
+                self.transition(State::Idle);
             },
-            State::Idle => {
-                return Ok(ClientResult::Idle)
+
+            (State::Idle, Input::IncomingMessage(Content::Disconnect(_))) => {
+                self.transition(State::Disconnected);
             },
-            State::InboundTransferOffered(request) => {
-                return Ok(ClientResult::InboundTransferOffered(request.clone()))
+
+            (_, Input::Disconnect) => {
+                self.push_event(ClientEvent::Disconnected);
+                self.writer.write(Content::Disconnect(api::Disconnect { }))?;
+                self.transition(State::Disconnected);
             },
-            State::OutboundTransferOffered(request) => {
-                return Ok(ClientResult::OutboundTransferOffered(request.clone()))
+
+            // Server transfer negotiation
+            (State::Idle, Input::IncomingMessage(Content::InboundTransferRequest(transfer))) => {
+                self.push_event(ClientEvent::InboundTransferOffered(transfer.clone()));
+                self.transition(State::InboundTransferOffered(transfer.clone()));
             },
+
+            (State::InboundTransferOffered(transfer), Input::AcceptTransfer) => {
+                self.writer.write(Content::AcceptTransfer(api::AcceptTransfer { id: transfer.id.clone() }))?;
+                let transfer = transfer.clone();
+                self.transition(State::InboundTransferInProgress(transfer));
+            },
+
+            (State::InboundTransferOffered(transfer), Input::RejectTransfer) => {
+                self.writer.write(Content::RejectTransfer(api::RejectTransfer { id: transfer.id.clone() }))?;
+                self.transition(State::Idle);
+            },
+
+            // Client transfer negotiation
+            (State::Idle, Input::RequestInboundTransfer(transfer)) => {
+                self.transition(State::InboundTransferRequested(transfer.clone()));
+                self.writer.write(Content::InboundTransferRequest(transfer.clone()))?;
+            },
+
+            (State::InboundTransferRequested(requested_transfer), Input::IncomingMessage(Content::AcceptTransfer(accepted_transfer))) => {
+                if requested_transfer.id == accepted_transfer.id {
+                    let id = accepted_transfer.id.clone();
+                    let requested_transfer = requested_transfer.clone();
+                    self.push_event(ClientEvent::TransferAccepted(id));
+                    self.transition(State::InboundTransferInProgress(requested_transfer));
+                } else {
+                    println!("transfer id mismatch");
+                }
+            },
+
+            (State::InboundTransferRequested(requested_transfer), Input::IncomingMessage(Content::RejectTransfer(rejected_transfer))) => {
+                if requested_transfer.id == rejected_transfer.id {
+                    self.push_event(ClientEvent::TransferRejected(rejected_transfer.id.clone()));
+                    self.transition(State::Idle)
+                } else {
+                    println!("transfer id mismatch");
+                }
+            },
+
             _ => {
-                return Ok(ClientResult::Busy)
-            }
+                return Err(ClientError { io_error: None, state: Some(self.state.clone()), input: Some(input.clone()) })
+            },
         }
+        Ok(())
     }
 
-    pub fn disconnect(&mut self) -> Result<ClientResult, Error> {
-        let output = self.machine.consume(&Input::Disconnect).unwrap();
-        return self.map_output(output);
+    pub fn take_events(&mut self) -> Vec<ClientEvent> {
+        let mut events = vec![];
+        std::mem::swap(&mut self.events, &mut events);
+        return events;
     }
 
-    pub fn feed_message(&mut self, msg: Content) -> Result<ClientResult, Error> {
-        let output = self.machine.consume(&Input::IncomingMessage(msg))?;
-        return self.map_output(output);
+    pub fn start(&mut self) -> ClientResult {
+        self.consume(&Input::Start)
     }
 
-    pub fn request_inbound_transfer(&mut self, request: api::InboundTransferRequest) -> Result<ClientResult, Error> {
-        let output = self.machine.consume(&Input::RequestInboundTransfer(request))?;
-        return self.map_output(output);
+    pub fn disconnect(&mut self) -> ClientResult {
+        self.consume(&Input::Disconnect)
     }
 
-    pub fn request_outbound_transfer(&mut self, request: api::OutboundTransferRequest) -> Result<ClientResult, Error> {
-        let output = self.machine.consume(&Input::RequestOutboundTransfer(request))?;
-        return self.map_output(output);
+    pub fn feed_message(&mut self, msg: Content) -> ClientResult {
+        self.consume(&Input::IncomingMessage(msg))
     }
 
-    pub fn accept_transfer(&mut self) -> Result<ClientResult, Error> {
-        let output = self.machine.consume(&Input::AcceptTransfer)?;
-        return self.map_output(output);
+    pub fn request_inbound_transfer(&mut self, request: api::InboundTransferRequest) -> ClientResult {
+        self.consume(&Input::RequestInboundTransfer(request))
     }
 
-    pub fn reject_transfer(&mut self) -> Result<ClientResult, Error> {
-        let output = self.machine.consume(&Input::RejectTransfer)?;
-        return self.map_output(output);
+    pub fn request_outbound_transfer(&mut self, request: api::OutboundTransferRequest) -> ClientResult {
+        self.consume(&Input::RequestOutboundTransfer(request))
     }
+
+    pub fn accept_transfer(&mut self) -> ClientResult {
+        self.consume(&Input::AcceptTransfer)
+    }
+
+    pub fn reject_transfer(&mut self) -> ClientResult {
+        self.consume(&Input::RejectTransfer)
+    }
+}
+
+#[derive(Debug)]
+pub enum ClientEvent {
+    Connected,
+    Disconnected,
+    InboundTransferOffered(api::InboundTransferRequest),
+    OutboundTransferOffered(api::OutboundTransferRequest),
+    TransferAccepted(String),
+    TransferRejected(String),
 }

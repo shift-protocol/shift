@@ -2,15 +2,12 @@ use ctrlc;
 use pty::fork::Fork;
 use std::io::{self, Read, Write};
 use std::process::{Command, Stdio};
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::{Mutex, Arc};
 use std::thread;
 use cancellation::*;
 use colored::*;
 
-use toffee::api::message::Content;
-use toffee::{Client, ClientResult};
+use toffee::{Client, ClientEvent};
 use toffee::{MessageReader, MessageWriter, MessageOutput, TransportWriter, CLIENT_TRANSPORT, SERVER_TRANSPORT};
 use toffee::pty::{enable_raw_mode, restore_mode};
 
@@ -100,16 +97,10 @@ impl<'a> App<'a> {
                     stdout.write(&data).unwrap();
                 },
                 MessageOutput::Message(msg) => {
-                    let returned = self.client.lock().unwrap().feed_message(msg);
-                    match returned {
-                        Ok(result) => {
-                            self.process_result(result)
-                        },
-                        Err(err) => {
-                            println!("Server error: {}", err.to_string());
-                            self.stop();
-                        }
+                    {
+                        self.client.lock().unwrap().feed_message(msg).unwrap();
                     }
+                    self.process_events();
                 },
             }
         }
@@ -117,27 +108,36 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    fn process_result(&mut self, res: ClientResult) {
-        match res {
-            ClientResult::Disconnected => {
-                println!("[{}]: {}", self.name, "Disconnected by server".green());
-                self.stop();
-            },
-            ClientResult::Busy => (),
-            ClientResult::Idle => {
-                ()
-            },
-            ClientResult::InboundTransferOffered(request) => {
-                println!("[{}]: {}: {:?}", self.name, "Inbound transfer offer".green(), request);
-                let result = self.client.lock().unwrap().accept_transfer().unwrap();
-                // let result = self.client.lock().unwrap().reject_transfer().unwrap();
-                self.process_result(result);
+    fn process_events(&mut self) {
+        let lock = self.client.clone();
+
+        let mut client = lock.lock().unwrap();
+        let events = client.take_events();
+        {
+            for event in events.iter() {
+                match event {
+                    ClientEvent::Connected => (),
+                    ClientEvent::Disconnected => {
+                        println!("[{}]: {}", self.name, "Disconnected by client".green());
+                        self.stop();
+                    },
+                    ClientEvent::InboundTransferOffered(request) => {
+                        println!("[{}]: {}: {:?}", self.name, "Inbound transfer offer".green(), request);
+                        client.accept_transfer().unwrap();
+                        // let result = self.client.lock().unwrap().reject_transfer().unwrap();
+                    }
+                    other => {
+                        println!("[{}]: {}: {:?}", self.name, "Unknown result".red(), other);
+                        self.stop();
+                    }
+                };
             }
-            other => {
-                println!("[{}]: {}: {:?}", self.name, "Unknown result".red(), other);
-                self.stop();
-            }
-        };
+        }
+
+        drop(client);
+        if events.len() > 0 {
+            self.process_events();
+        }
     }
 
     fn stop(&mut self) {
