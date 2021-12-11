@@ -1,20 +1,21 @@
+use cancellation::*;
+use colored::*;
 use ctrlc;
 use pty::fork::Fork;
 use std::io::{self, Read, Write};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, Arc};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use cancellation::*;
-use colored::*;
 
-use toffee::{Client, ClientEvent};
-use toffee::{MessageReader, MessageWriter, MessageOutput, TransportWriter, CLIENT_TRANSPORT, SERVER_TRANSPORT};
 use toffee::pty::{enable_raw_mode, restore_mode};
-
+use toffee::{api, Client, ClientEvent};
+use toffee::{
+    MessageOutput, MessageReader, MessageWriter, TransportWriter, CLIENT_TRANSPORT,
+    SERVER_TRANSPORT,
+};
 
 struct App<'a> {
     master: pty::fork::Master,
-    fork: pty::fork::Fork,
     name: String,
     client: Arc<Mutex<Client<'a>>>,
     stopped: bool,
@@ -24,14 +25,7 @@ struct App<'a> {
 
 impl<'a> App<'a> {
     pub fn new(name: String) -> Self {
-        let old_mode = enable_raw_mode(0);
-        let fork = Fork::from_ptmx().unwrap();
-
-        ctrlc::set_handler(move || {
-            restore_mode(0, old_mode);
-            std::process::exit(1);
-        })
-        .unwrap();
+        let fork = Box::leak(Box::new(Fork::from_ptmx().unwrap()));
 
         if fork.is_child().ok().is_some() {
             let mut args = std::env::args();
@@ -48,6 +42,13 @@ impl<'a> App<'a> {
         }
 
         let master = fork.is_parent().ok().unwrap();
+        let old_mode = enable_raw_mode(0);
+
+        ctrlc::set_handler(move || {
+            restore_mode(0, old_mode);
+            std::process::exit(1);
+        })
+        .unwrap();
 
         thread::spawn({
             let mut master = master.clone();
@@ -68,17 +69,16 @@ impl<'a> App<'a> {
 
         let mut _self = Self {
             master: master.clone(),
-            fork,
             name,
-            client: Arc::new(Mutex::new(Client::new(
-                MessageWriter::new(TransportWriter::new(SERVER_TRANSPORT, Box::new(master.clone())))
-            ))),
+            client: Arc::new(Mutex::new(Client::new(MessageWriter::new(
+                TransportWriter::new(SERVER_TRANSPORT, Box::new(master.clone())),
+            )))),
             stopped: false,
             old_mode,
             cancellation_token_source: CancellationTokenSource::new(),
         };
 
-        return _self
+        return _self;
     }
 
     pub fn run(&mut self) {
@@ -95,13 +95,14 @@ impl<'a> App<'a> {
             match msg {
                 MessageOutput::Passthrough(data) => {
                     stdout.write(&data).unwrap();
-                },
+                    stdout.flush().unwrap();
+                }
                 MessageOutput::Message(msg) => {
                     {
                         self.client.lock().unwrap().feed_message(msg).unwrap();
                     }
                     self.process_events();
-                },
+                }
             }
         }
 
@@ -113,21 +114,40 @@ impl<'a> App<'a> {
 
         let mut client = lock.lock().unwrap();
         let events = client.take_events();
+        let num_events = events.len();
         {
-            for event in events.iter() {
+            for event in events {
                 match event {
                     ClientEvent::Connected => (),
                     ClientEvent::Disconnected => {
                         println!("[{}]: {}", self.name, "Disconnected by client".green());
                         self.stop();
-                    },
+                    }
                     ClientEvent::InboundTransferOffered(request) => {
-                        println!("[{}]: {}: {:?}", self.name, "Inbound transfer offer".green(), request);
+                        println!(
+                            "[{}]: {}: {:?}",
+                            self.name,
+                            "Inbound transfer offer".green(),
+                            request
+                        );
                         client.accept_transfer().unwrap();
                         // let result = self.client.lock().unwrap().reject_transfer().unwrap();
                     }
+                    ClientEvent::InboundFileOpening(_, file) => {
+                        println!(
+                            "[{}]: {}: {:?}",
+                            self.name,
+                            "Inbound file open".green(),
+                            file
+                        );
+                        client
+                            .confirm_file_opened(api::FileOpened { continue_from: 0 })
+                            .unwrap();
+                    }
+                    ClientEvent::TransferClosed => (),
+                    ClientEvent::FileClosed(_) => (),
                     other => {
-                        println!("[{}]: {}: {:?}", self.name, "Unknown result".red(), other);
+                        println!("[{}]: {}: {:?}", self.name, "Unknown event".red(), other);
                         self.stop();
                     }
                 };
@@ -135,7 +155,7 @@ impl<'a> App<'a> {
         }
 
         drop(client);
-        if events.len() > 0 {
+        if num_events > 0 {
             self.process_events();
         }
     }
@@ -148,9 +168,7 @@ impl<'a> App<'a> {
     }
 }
 
-
 fn main() {
-
     App::new("server".to_string()).run();
 
     // let mut message_writer =
@@ -173,5 +191,4 @@ fn main() {
     //         }
     //     }
     // }
-
 }

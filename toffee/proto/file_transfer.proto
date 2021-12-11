@@ -8,28 +8,39 @@ message Init {
 
 message FileInfo {
     string name = 1;
-    uint32 size = 2;
+    uint64 size = 2;
     uint32 mode = 3;
 }
 
 message OutboundTransferRequest {
-    string id = 1;
     bool allowDirectories = 2;
     bool allowMultiple = 3;
 }
 
 message InboundTransferRequest {
-    string id = 1;
     FileInfo fileInfo = 2;
 }
 
-message AcceptTransfer {
-    string id = 1;
+message AcceptTransfer { }
+
+message RejectTransfer { }
+
+message OpenFile {
+    FileInfo fileInfo = 2;
 }
 
-message RejectTransfer {
-    string id = 1;
+message FileOpened {
+    uint64 continueFrom = 2;
 }
+
+message Chunk {
+    uint64 offset = 1;
+    bytes data = 2;
+}
+
+message CloseFile { }
+
+message CloseTransfer { }
 
 message Disconnect { }
 
@@ -41,5 +52,9 @@ message Message {
         InboundTransferRequest inboundTransferRequest = 4;
         AcceptTransfer acceptTransfer = 5;
         RejectTransfer rejectTransfer = 6;
+        OpenFile openFile = 7;
+        FileOpened fileOpened = 8;
+        CloseFile closeFile = 9;
+        CloseTransfer closeTransfer = 10;
     }
 }

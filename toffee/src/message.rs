@@ -1,13 +1,14 @@
-use prost::Message;
-use std::io::{self, Read};
 use bytes::Bytes;
 use cancellation::*;
+use prost::Message;
+use std::io::{self, Read};
 
 use super::api::{self, message::Content};
-use super::transport::{TransportConfig, TransportReader, TransportWriter, TransportOutput, TransportFeeder};
+use super::transport::{
+    TransportConfig, TransportFeeder, TransportOutput, TransportReader, TransportWriter,
+};
 
-
-fn decode_from(output: Vec<TransportOutput>) -> Vec<MessageOutput>  {
+fn decode_from(output: Vec<TransportOutput>) -> Vec<MessageOutput> {
     let mut result = vec![];
     for part in output {
         match part {
@@ -39,7 +40,12 @@ pub struct MessageFeeder<'a> {
 }
 
 impl<'a> MessageFeeder<'a> {
-    pub fn new(reader: &'a mut TransportReader<'a>, stream: &'a mut dyn Read, ct: &'a CancellationToken) -> Self {
+    pub fn new(
+        reader: &'a mut TransportReader<'a>,
+        stream: &'a mut dyn Read,
+        ct: &'a CancellationToken,
+    ) -> Self {
+        println!("1");
         Self {
             feeder: reader.feed_from(stream, ct),
         }
@@ -57,16 +63,13 @@ impl<'a> Iterator for MessageFeeder<'a> {
                     return Some(output);
                 }
                 None
-            },
+            }
         }
     }
 }
 
-
 impl<'a> MessageReader<'a> {
-    pub fn new(
-        config: TransportConfig<'a>,
-    ) -> Self {
+    pub fn new(config: TransportConfig<'a>) -> Self {
         Self {
             reader: TransportReader::new(config),
         }
@@ -77,7 +80,11 @@ impl<'a> MessageReader<'a> {
         decode_from(output)
     }
 
-    pub fn feed_from(&'a mut self, stream: &'a mut dyn Read, ct: &'a CancellationToken) -> MessageFeeder<'a> {
+    pub fn feed_from(
+        &'a mut self,
+        stream: &'a mut dyn Read,
+        ct: &'a CancellationToken,
+    ) -> MessageFeeder<'a> {
         return MessageFeeder::new(&mut self.reader, stream, ct);
     }
 }

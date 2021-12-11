@@ -1,8 +1,8 @@
 use base64;
-use std::io::{self, Read, Write};
-use twoway;
 use bytes::{Bytes, BytesMut};
 use cancellation::*;
+use std::io::{self, Read, Write};
+use twoway;
 
 #[derive(Clone)]
 pub struct TransportConfig<'a> {
@@ -31,7 +31,11 @@ pub struct TransportFeeder<'a> {
 }
 
 impl<'a> TransportFeeder<'a> {
-    pub fn new(reader: &'a mut TransportReader<'a>, stream: &'a mut dyn Read, ct: &'a CancellationToken) -> Self {
+    pub fn new(
+        reader: &'a mut TransportReader<'a>,
+        stream: &'a mut dyn Read,
+        ct: &'a CancellationToken,
+    ) -> Self {
         Self {
             reader,
             stream,
@@ -47,24 +51,24 @@ impl<'a> Iterator for TransportFeeder<'a> {
 
     fn next(&mut self) -> Option<TransportOutput> {
         if let None = self.ct.result().ok() {
-            return None
+            return None;
         }
         while self.result_buffer.len() == 0 {
             let size = self.stream.read(&mut self.data_buffer).expect("read error");
             if size == 0 {
-                return None
+                return None;
             }
-            self.result_buffer.append(&mut self.reader.feed(&self.data_buffer[..size]));
+            self.result_buffer
+                .append(&mut self.reader.feed(&self.data_buffer[..size]));
         }
 
         if self.result_buffer.len() == 0 {
-            return None
+            return None;
         }
 
         Some(self.result_buffer.remove(0))
     }
 }
-
 
 impl<'a> TransportReader<'a> {
     pub fn new(config: TransportConfig<'a>) -> Self {
@@ -75,14 +79,17 @@ impl<'a> TransportReader<'a> {
         }
     }
 
-    pub fn feed_from(&'a mut self, stream: &'a mut dyn Read, ct: &'a CancellationToken) -> TransportFeeder<'a> {
-        return TransportFeeder::new(self, stream, ct)
+    pub fn feed_from(
+        &'a mut self,
+        stream: &'a mut dyn Read,
+        ct: &'a CancellationToken,
+    ) -> TransportFeeder<'a> {
+        return TransportFeeder::new(self, stream, ct);
     }
 
     pub fn feed(&mut self, data: &[u8]) -> Vec<TransportOutput> {
         let mut remaining_data = Bytes::from(BytesMut::from(data));
         let mut result = vec![];
-
         if self.in_sequence {
             for part in self.feed_remainder(&remaining_data) {
                 match part {
@@ -99,7 +106,9 @@ impl<'a> TransportReader<'a> {
         loop {
             match twoway::find_bytes(&remaining_data, self.config.prefix) {
                 Some(start_index) => {
-                    result.push(TransportOutput::Passthrough(remaining_data.slice(..start_index).clone()));
+                    result.push(TransportOutput::Passthrough(
+                        remaining_data.slice(..start_index).clone(),
+                    ));
                     remaining_data = remaining_data.slice(start_index + self.config.prefix.len()..);
 
                     for part in self.feed_remainder(&remaining_data) {
@@ -132,7 +141,9 @@ impl<'a> TransportReader<'a> {
                     result.push(TransportOutput::Packet(Bytes::from(packet)));
                 }
                 self.in_sequence = false;
-                result.push(TransportOutput::Passthrough(data.slice(length + self.config.suffix.len()..)));
+                result.push(TransportOutput::Passthrough(
+                    data.slice(length + self.config.suffix.len()..),
+                ));
             }
             None => {
                 self.in_sequence = true;
@@ -150,10 +161,7 @@ pub struct TransportWriter<'a> {
 
 impl<'a> TransportWriter<'a> {
     pub fn new(config: TransportConfig<'a>, stream: Box<dyn Write + Send>) -> Self {
-        Self {
-            config,
-            stream,
-        }
+        Self { config, stream }
     }
 
     pub fn write(&mut self, data: &[u8]) -> io::Result<()> {

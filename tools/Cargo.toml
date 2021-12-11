@@ -8,9 +8,10 @@ toffee = { path = "../toffee" }
 pty = "0.2"
 ctrlc = "3.2"
 termios = "0.3"
-indicatif = "0.16.2"
-colored = "2.0.0"
-cancellation = "0.1.0"
+indicatif = "0.16"
+colored = "2.0"
+cancellation = "0.1"
+crossbeam = "0.8"
 
 [[bin]]
 name = "server"
