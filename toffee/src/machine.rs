@@ -47,6 +47,7 @@ pub enum ClientEvent {
     TransferRejected(),
     InboundFileOpening(api::InboundTransferRequest, api::OpenFile),
     FileTransferStarted(OpenFile, api::FileOpened),
+    Chunk(api::Chunk),
     FileClosed(OpenFile),
     TransferClosed,
 }
@@ -95,7 +96,7 @@ impl<'a> Client<'a> {
         self.events.push(event);
     }
 
-    fn consume(&mut self, input: &Input) -> Result<(), ClientError> {
+    fn consume(&mut self, input: Input) -> Result<(), ClientError> {
         println!("machine input: {:?}", input);
         match (&self.state, input) {
             (State::Initial, Input::Start) => {
@@ -217,19 +218,27 @@ impl<'a> Client<'a> {
                 let open_file = OpenFile {
                     info: requested_file.file_info.clone().unwrap(),
                 };
-                self.push_event(ClientEvent::FileTransferStarted(open_file.clone(), file.clone()));
+                self.push_event(ClientEvent::FileTransferStarted(
+                    open_file.clone(),
+                    file.clone(),
+                ));
                 self.transition(State::InboundFileTransfer(transfer, Some(open_file)));
             }
 
             // General transfer handling
-            (
-                State::InboundFileTransfer(transfer, Some(file)),
-                Input::CloseFile,
-            ) => {
+            (State::InboundFileTransfer(_, _), Input::SendChunk(chunk)) => {
+                self.writer.write(Content::Chunk(chunk))?;
+            }
+
+            (State::InboundFileTransfer(_, _), Input::IncomingMessage(Content::Chunk(chunk))) => {
+                self.push_event(ClientEvent::Chunk(chunk));
+            }
+
+            (State::InboundFileTransfer(transfer, Some(file)), Input::CloseFile) => {
                 let transfer = transfer.clone();
                 let file = file.clone();
                 self.transition(State::InboundFileTransfer(transfer, None));
-                self.writer.write(Content::CloseFile(api::CloseFile { }))?;
+                self.writer.write(Content::CloseFile(api::CloseFile {}))?;
                 self.push_event(ClientEvent::FileClosed(file.clone()));
             }
 
@@ -244,30 +253,28 @@ impl<'a> Client<'a> {
             }
 
             (
-                State::InboundFileTransfer(_, _) |
-                State::InboundTransfer(_, _),
+                State::InboundFileTransfer(_, _) | State::InboundTransfer(_, _),
                 Input::CloseTransfer,
             ) => {
                 self.transition(State::Idle);
-                self.writer.write(Content::CloseTransfer(api::CloseTransfer { }))?;
+                self.writer
+                    .write(Content::CloseTransfer(api::CloseTransfer {}))?;
                 self.push_event(ClientEvent::TransferClosed);
             }
 
             (
-                State::InboundFileTransfer(transfer, _) |
-                State::InboundTransfer(transfer, _),
+                State::InboundFileTransfer(_, _) | State::InboundTransfer(_, _),
                 Input::IncomingMessage(Content::CloseTransfer(_)),
             ) => {
-                let transfer = transfer.clone();
-                self.transition(State::InboundTransfer(transfer, None));
+                self.transition(State::Idle);
                 self.push_event(ClientEvent::TransferClosed);
             }
 
-            _ => {
+            (_, input) => {
                 return Err(ClientError {
                     io_error: None,
                     state: Some(self.state.clone()),
-                    input: Some(input.clone()),
+                    input: Some(input),
                 })
             }
         }
@@ -281,56 +288,56 @@ impl<'a> Client<'a> {
     }
 
     pub fn start(&mut self) -> ClientResult {
-        self.consume(&Input::Start)
+        self.consume(Input::Start)
     }
 
     pub fn disconnect(&mut self) -> ClientResult {
-        self.consume(&Input::Disconnect)
+        self.consume(Input::Disconnect)
     }
 
     pub fn feed_message(&mut self, msg: Content) -> ClientResult {
-        self.consume(&Input::IncomingMessage(msg))
+        self.consume(Input::IncomingMessage(msg))
     }
 
     pub fn request_inbound_transfer(
         &mut self,
         request: api::InboundTransferRequest,
     ) -> ClientResult {
-        self.consume(&Input::RequestInboundTransfer(request))
+        self.consume(Input::RequestInboundTransfer(request))
     }
 
     pub fn request_outbound_transfer(
         &mut self,
         request: api::OutboundTransferRequest,
     ) -> ClientResult {
-        self.consume(&Input::RequestOutboundTransfer(request))
+        self.consume(Input::RequestOutboundTransfer(request))
     }
 
     pub fn accept_transfer(&mut self) -> ClientResult {
-        self.consume(&Input::AcceptTransfer)
+        self.consume(Input::AcceptTransfer)
     }
 
     pub fn reject_transfer(&mut self) -> ClientResult {
-        self.consume(&Input::RejectTransfer)
+        self.consume(Input::RejectTransfer)
     }
 
     pub fn open_file(&mut self, request: api::OpenFile) -> ClientResult {
-        self.consume(&Input::OpenFile(request))
+        self.consume(Input::OpenFile(request))
     }
 
     pub fn confirm_file_opened(&mut self, file: api::FileOpened) -> ClientResult {
-        self.consume(&Input::ConfirmFileOpened(file))
+        self.consume(Input::ConfirmFileOpened(file))
     }
 
     pub fn send_chunk(&mut self, chunk: api::Chunk) -> ClientResult {
-        self.consume(&Input::SendChunk(chunk))
+        self.consume(Input::SendChunk(chunk))
     }
 
     pub fn close_file(&mut self) -> ClientResult {
-        self.consume(&Input::CloseFile)
+        self.consume(Input::CloseFile)
     }
 
     pub fn close_transfer(&mut self) -> ClientResult {
-        self.consume(&Input::CloseTransfer)
+        self.consume(Input::CloseTransfer)
     }
 }

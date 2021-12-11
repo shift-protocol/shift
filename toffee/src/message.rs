@@ -45,7 +45,6 @@ impl<'a> MessageFeeder<'a> {
         stream: &'a mut dyn Read,
         ct: &'a CancellationToken,
     ) -> Self {
-        println!("1");
         Self {
             feeder: reader.feed_from(stream, ct),
         }

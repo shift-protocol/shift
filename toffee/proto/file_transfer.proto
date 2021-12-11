@@ -54,7 +54,8 @@ message Message {
         RejectTransfer rejectTransfer = 6;
         OpenFile openFile = 7;
         FileOpened fileOpened = 8;
-        CloseFile closeFile = 9;
-        CloseTransfer closeTransfer = 10;
+        Chunk chunk = 9;
+        CloseFile closeFile = 10;
+        CloseTransfer closeTransfer = 11;
     }
 }

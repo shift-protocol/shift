@@ -144,6 +144,14 @@ impl<'a> App<'a> {
                             .confirm_file_opened(api::FileOpened { continue_from: 0 })
                             .unwrap();
                     }
+                    ClientEvent::Chunk(chunk) => {
+                        println!(
+                            "[{}]: {}: {:?}",
+                            self.name,
+                            "Got chunk".green(),
+                            chunk.data.len(),
+                        );
+                    }
                     ClientEvent::TransferClosed => (),
                     ClientEvent::FileClosed(_) => (),
                     other => {

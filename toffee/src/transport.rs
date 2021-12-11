@@ -136,10 +136,11 @@ impl<'a> TransportReader<'a> {
         let mut result: Vec<TransportOutput> = vec![];
         match twoway::find_bytes(data, self.config.suffix) {
             Some(length) => {
-                let encoded_packet = &data[..length];
-                if let Some(packet) = base64::decode(encoded_packet).ok() {
+                self.buffer.extend_from_slice(&data[..length]);
+                if let Some(packet) = base64::decode(&self.buffer).ok() {
                     result.push(TransportOutput::Packet(Bytes::from(packet)));
                 }
+                self.buffer = vec![];
                 self.in_sequence = false;
                 result.push(TransportOutput::Passthrough(
                     data.slice(length + self.config.suffix.len()..),

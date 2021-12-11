@@ -55,6 +55,7 @@ impl<'a> App<'a> {
                 let token = self.cancellation_token_source.token().clone();
                 let client = self.client.clone();
                 let mut stdin = io::stdin();
+                let tx = tx.clone();
                 move |_| {
                     tx.send(0).unwrap();
                     let mut reader = MessageReader::new(SERVER_TRANSPORT);
@@ -68,9 +69,10 @@ impl<'a> App<'a> {
             });
 
             loop {
-                rx.recv().unwrap();
                 let events = { self.client.lock().unwrap().take_events() };
-                println!("{:?}", events);
+                if events.len() == 0 {
+                    rx.recv().unwrap();
+                }
                 for event in events {
                     match event {
                         ClientEvent::Connected => {
@@ -99,8 +101,10 @@ impl<'a> App<'a> {
                             let path = self.current_path.clone().expect("Current file not set");
                             scope.spawn({
                                 let client = self.client.clone();
+                                let tx = tx.clone();
                                 move |_| {
-                                    send_file(client, path);
+                                    send_file(client, response.continue_from, path).unwrap();
+                                    tx.send(0).unwrap();
                                 }
                             });
                         }
@@ -179,26 +183,27 @@ fn main() {
     restore_mode(0, old_mode);
 }
 
-fn send_file(client: Arc<Mutex<Client>>, path: String) -> std::io::Result<()> {
+fn send_file(client: Arc<Mutex<Client>>, mut position: u64, path: String) -> std::io::Result<()> {
     const CAP: usize = 1024 * 128;
     let file = File::open(path)?;
     let mut reader = BufReader::with_capacity(CAP, file);
     loop {
         let length = {
             let buffer = reader.fill_buf()?;
+            if buffer.len() == 0 {
+                break;
+            }
             client
                 .lock()
                 .unwrap()
                 .send_chunk(api::Chunk {
-                    offset: 0,
+                    offset: position,
                     data: buffer.to_vec(),
                 })
                 .unwrap();
+            position += buffer.len() as u64;
             buffer.len()
         };
-        if length == 0 {
-            break;
-        }
         reader.consume(length);
     }
     client.lock().unwrap().close_file().unwrap();
