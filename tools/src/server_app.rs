@@ -38,7 +38,7 @@ struct App<'a> {
     cancellation_token_source: CancellationTokenSource,
 
     open_file: Option<File>,
-    current_inbound_transfer: Option<api::InboundTransferRequest>,
+    current_inbound_transfer: Option<api::SendRequest>,
 }
 
 impl<'a> App<'a> {
@@ -201,6 +201,20 @@ impl<'a> App<'a> {
                     ClientEvent::FileClosed(_) => {
                         self.open_file = None;
                     }
+                    ClientEvent::OutboundTransferOffered(_) => {
+                        let path = Path::new(&self.work_dir);
+                        let item = path.read_dir().unwrap().next();
+                        match item {
+                            Some(item) => {
+                                let item = item.unwrap();
+                                self.open_file = Some(File::open(item.path()).unwrap());
+                            },
+                            None => {
+                                println!("[{}]: {}", self.name, "No files to send".green());
+                                client.disconnect().unwrap();
+                            }
+                        }
+                    },
                     other => {
                         println!("[{}]: {}: {:?}", self.name, "Unknown event".red(), other);
                         self.stop();

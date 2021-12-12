@@ -12,12 +12,12 @@ message FileInfo {
     uint32 mode = 3;
 }
 
-message OutboundTransferRequest {
+message ReceiveRequest {
     bool allowDirectories = 2;
     bool allowMultiple = 3;
 }
 
-message InboundTransferRequest {
+message SendRequest {
     FileInfo fileInfo = 2;
 }
 
@@ -48,8 +48,8 @@ message Message {
     oneof content {
         Init init = 1;
         Disconnect disconnect = 2;
-        OutboundTransferRequest outboundTransferRequest = 3;
-        InboundTransferRequest inboundTransferRequest = 4;
+        ReceiveRequest receiveRequest = 3;
+        SendRequest sendRequest = 4;
         AcceptTransfer acceptTransfer = 5;
         RejectTransfer rejectTransfer = 6;
         OpenFile openFile = 7;

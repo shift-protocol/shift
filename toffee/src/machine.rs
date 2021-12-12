@@ -10,10 +10,10 @@ pub struct OpenFile {
 pub enum Input {
     Start,
     IncomingMessage(Content),
-    RequestInboundTransfer(api::InboundTransferRequest),
+    RequestInboundTransfer(api::ReceiveRequest),
     AcceptTransfer,
     RejectTransfer,
-    RequestOutboundTransfer(api::OutboundTransferRequest),
+    RequestOutboundTransfer(api::SendRequest),
     OpenFile(api::OpenFile),
     ConfirmFileOpened(api::FileOpened),
     SendChunk(api::Chunk),
@@ -27,13 +27,14 @@ pub enum State {
     Initial,
     Connecting,
     Idle,
-    InboundTransferOffered(api::InboundTransferRequest),
-    InboundTransferRequested(api::InboundTransferRequest),
-    InboundTransfer(api::InboundTransferRequest, Option<api::OpenFile>),
-    InboundFileTransfer(api::InboundTransferRequest, Option<OpenFile>),
-    OutboundTransferOffered(api::OutboundTransferRequest),
-    OutboundTransferRequested(api::OutboundTransferRequest),
-    OutboundTransferInProgress(api::OutboundTransferRequest, Option<OpenFile>),
+    InboundTransferRequested(api::ReceiveRequest),
+    InboundTransferOffered(api::SendRequest),
+    InboundTransfer(api::SendRequest, Option<api::OpenFile>),
+    InboundFileTransfer(api::SendRequest, Option<OpenFile>),
+    OutboundTransferRequested(api::SendRequest),
+    OutboundTransferOffered(api::SendRequest),
+    OutboundTransfer(api::SendRequest, Option<api::OpenFile>),
+    OutboundFileTransfer(api::SendRequest, Option<OpenFile>),
     Disconnected,
 }
 
@@ -41,11 +42,11 @@ pub enum State {
 pub enum ClientEvent {
     Connected,
     Disconnected,
-    InboundTransferOffered(api::InboundTransferRequest),
-    OutboundTransferOffered(api::OutboundTransferRequest),
+    InboundTransferOffered(api::SendRequest),
+    OutboundTransferOffered(api::ReceiveRequest),
     TransferAccepted(),
     TransferRejected(),
-    InboundFileOpening(api::InboundTransferRequest, api::OpenFile),
+    InboundFileOpening(api::SendRequest, api::OpenFile),
     FileTransferStarted(OpenFile, api::FileOpened),
     Chunk(api::Chunk),
     FileClosed(OpenFile),
@@ -132,8 +133,14 @@ impl<'a> Client<'a> {
                 self.transition(State::Disconnected);
             }
 
-            // Server transfer negotiation
-            (State::Idle, Input::IncomingMessage(Content::InboundTransferRequest(transfer))) => {
+            // Inbound transfer handling
+            (State::Idle, Input::RequestInboundTransfer(transfer)) => {
+                self.transition(State::InboundTransferRequested(transfer.clone()));
+                self.writer
+                    .write(Content::ReceiveRequest(transfer.clone()))?;
+            }
+
+            (State::Idle, Input::IncomingMessage(Content::SendRequest(transfer))) => {
                 self.push_event(ClientEvent::InboundTransferOffered(transfer.clone()));
                 self.transition(State::InboundTransferOffered(transfer.clone()));
             }
@@ -178,39 +185,43 @@ impl<'a> Client<'a> {
                 ));
             }
 
-            // Client transfer negotiation
-            (State::Idle, Input::RequestInboundTransfer(transfer)) => {
-                self.transition(State::InboundTransferRequested(transfer.clone()));
+            // Outbound transfer handling
+            (State::Idle, Input::IncomingMessage(Content::ReceiveRequest(request))) => {
+                self.push_event(ClientEvent::OutboundTransferOffered(request));
+            }
+
+            (State::Idle, Input::RequestOutboundTransfer(transfer)) => {
+                self.transition(State::OutboundTransferRequested(transfer.clone()));
                 self.writer
-                    .write(Content::InboundTransferRequest(transfer.clone()))?;
+                    .write(Content::SendRequest(transfer.clone()))?;
             }
 
             (
-                State::InboundTransferRequested(requested_transfer),
+                State::OutboundTransferRequested(requested_transfer),
                 Input::IncomingMessage(Content::AcceptTransfer(_)),
             ) => {
                 let requested_transfer = requested_transfer.clone();
                 self.push_event(ClientEvent::TransferAccepted());
-                self.transition(State::InboundTransfer(requested_transfer, None));
+                self.transition(State::OutboundTransfer(requested_transfer, None));
             }
 
             (
-                State::InboundTransferRequested(_),
+                State::OutboundTransferRequested(_),
                 Input::IncomingMessage(Content::RejectTransfer(_)),
             ) => {
                 self.push_event(ClientEvent::TransferRejected());
                 self.transition(State::Idle)
             }
 
-            (State::InboundTransfer(transfer, _), Input::OpenFile(file)) => {
+            (State::OutboundTransfer(transfer, _), Input::OpenFile(file)) => {
                 let transfer = transfer.clone();
                 let file = file.clone();
                 self.writer.write(Content::OpenFile(file.clone()))?;
-                self.transition(State::InboundTransfer(transfer.clone(), Some(file)));
+                self.transition(State::OutboundTransfer(transfer.clone(), Some(file)));
             }
 
             (
-                State::InboundTransfer(transfer, Some(requested_file)),
+                State::OutboundTransfer(transfer, Some(requested_file)),
                 Input::IncomingMessage(Content::FileOpened(file)),
             ) => {
                 let transfer = transfer.clone();
@@ -222,11 +233,11 @@ impl<'a> Client<'a> {
                     open_file.clone(),
                     file.clone(),
                 ));
-                self.transition(State::InboundFileTransfer(transfer, Some(open_file)));
+                self.transition(State::OutboundFileTransfer(transfer, Some(open_file)));
             }
 
             // General transfer handling
-            (State::InboundFileTransfer(_, _), Input::SendChunk(chunk)) => {
+            (State::OutboundFileTransfer(_, _), Input::SendChunk(chunk)) => {
                 self.writer.write(Content::Chunk(chunk))?;
             }
 
@@ -234,10 +245,10 @@ impl<'a> Client<'a> {
                 self.push_event(ClientEvent::Chunk(chunk));
             }
 
-            (State::InboundFileTransfer(transfer, Some(file)), Input::CloseFile) => {
+            (State::OutboundFileTransfer(transfer, Some(file)), Input::CloseFile) => {
                 let transfer = transfer.clone();
                 let file = file.clone();
-                self.transition(State::InboundFileTransfer(transfer, None));
+                self.transition(State::OutboundFileTransfer(transfer, None));
                 self.writer.write(Content::CloseFile(api::CloseFile {}))?;
                 self.push_event(ClientEvent::FileClosed(file.clone()));
             }
@@ -253,7 +264,8 @@ impl<'a> Client<'a> {
             }
 
             (
-                State::InboundFileTransfer(_, _) | State::InboundTransfer(_, _),
+                State::InboundFileTransfer(_, _) | State::InboundTransfer(_, _) |
+                State::OutboundFileTransfer(_, _) | State::OutboundTransfer(_, _),
                 Input::CloseTransfer,
             ) => {
                 self.transition(State::Idle);
@@ -263,7 +275,8 @@ impl<'a> Client<'a> {
             }
 
             (
-                State::InboundFileTransfer(_, _) | State::InboundTransfer(_, _),
+                State::InboundFileTransfer(_, _) | State::InboundTransfer(_, _) |
+                State::OutboundFileTransfer(_, _) | State::OutboundTransfer(_, _),
                 Input::IncomingMessage(Content::CloseTransfer(_)),
             ) => {
                 self.transition(State::Idle);
@@ -301,14 +314,14 @@ impl<'a> Client<'a> {
 
     pub fn request_inbound_transfer(
         &mut self,
-        request: api::InboundTransferRequest,
+        request: api::ReceiveRequest,
     ) -> ClientResult {
         self.consume(Input::RequestInboundTransfer(request))
     }
 
     pub fn request_outbound_transfer(
         &mut self,
-        request: api::OutboundTransferRequest,
+        request: api::SendRequest,
     ) -> ClientResult {
         self.consume(Input::RequestOutboundTransfer(request))
     }

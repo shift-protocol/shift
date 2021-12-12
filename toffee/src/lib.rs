@@ -4,6 +4,7 @@ mod machine;
 mod message;
 pub mod pty;
 mod transport;
+pub mod helpers;
 
 pub use self::constants::{CLIENT_TRANSPORT, SERVER_TRANSPORT};
 pub use self::machine::{Client, ClientEvent};
