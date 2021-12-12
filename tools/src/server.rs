@@ -1,8 +1,12 @@
 use cancellation::*;
+use clap::{self, Parser};
 use colored::*;
 use ctrlc;
+use path_clean::PathClean;
 use pty::fork::Fork;
-use std::io::{self, Read, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -14,24 +18,37 @@ use toffee::{
     SERVER_TRANSPORT,
 };
 
+#[derive(Parser, Debug)]
+#[clap(version)]
+struct Cli {
+    #[clap(short, long)]
+    directory: String,
+
+    #[clap(multiple_values = true)]
+    args: Vec<String>,
+}
+
 struct App<'a> {
     master: pty::fork::Master,
     name: String,
+    work_dir: String,
     client: Arc<Mutex<Client<'a>>>,
     stopped: bool,
     old_mode: termios::Termios,
     cancellation_token_source: CancellationTokenSource,
+
+    open_file: Option<File>,
+    current_inbound_transfer: Option<api::InboundTransferRequest>,
 }
 
 impl<'a> App<'a> {
-    pub fn new(name: String) -> Self {
+    pub fn new(args: Cli) -> Self {
         let fork = Box::leak(Box::new(Fork::from_ptmx().unwrap()));
 
         if fork.is_child().ok().is_some() {
-            let mut args = std::env::args();
-            args.next();
-            let _ = Command::new(args.next().expect("No program name"))
-                .args(args)
+            println!("Starting {}", args.args[0]);
+            let _ = Command::new(&args.args[0])
+                .args(&args.args[1..])
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
@@ -69,13 +86,16 @@ impl<'a> App<'a> {
 
         let mut _self = Self {
             master: master.clone(),
-            name,
+            name: "server".to_string(),
+            work_dir: args.directory,
             client: Arc::new(Mutex::new(Client::new(MessageWriter::new(
                 TransportWriter::new(SERVER_TRANSPORT, Box::new(master.clone())),
             )))),
             stopped: false,
             old_mode,
             cancellation_token_source: CancellationTokenSource::new(),
+            open_file: None,
+            current_inbound_transfer: None,
         };
 
         return _self;
@@ -131,18 +151,38 @@ impl<'a> App<'a> {
                             request
                         );
                         client.accept_transfer().unwrap();
-                        // let result = self.client.lock().unwrap().reject_transfer().unwrap();
+                        self.current_inbound_transfer = Some(request);
                     }
                     ClientEvent::InboundFileOpening(_, file) => {
+                        let transfer = self.current_inbound_transfer.clone();
+                        let rel_path =
+                            Path::new(&transfer.and_then(|x| x.file_info).map(|x| x.name).unwrap())
+                                .join(file.file_info.unwrap().name)
+                                .clean();
+                        let path = Path::new(&self.work_dir).join(rel_path);
+
                         println!(
                             "[{}]: {}: {:?}",
                             self.name,
                             "Inbound file open".green(),
-                            file
+                            path
                         );
+
+                        let mut file;
+                        if path.exists() {
+                            file = OpenOptions::new().append(true).open(path.clone()).unwrap();
+                        } else {
+                            file = File::create(path.clone()).unwrap();
+                        }
+                        let position = file.seek(SeekFrom::End(0)).unwrap();
+
                         client
-                            .confirm_file_opened(api::FileOpened { continue_from: 0 })
+                            .confirm_file_opened(api::FileOpened {
+                                continue_from: position,
+                            })
                             .unwrap();
+
+                        self.open_file = Some(file);
                     }
                     ClientEvent::Chunk(chunk) => {
                         println!(
@@ -151,9 +191,16 @@ impl<'a> App<'a> {
                             "Got chunk".green(),
                             chunk.data.len(),
                         );
+                        if let Some(file) = &mut self.open_file {
+                            file.write(&chunk.data).unwrap();
+                        }
                     }
-                    ClientEvent::TransferClosed => (),
-                    ClientEvent::FileClosed(_) => (),
+                    ClientEvent::TransferClosed => {
+                        self.current_inbound_transfer = None;
+                    }
+                    ClientEvent::FileClosed(_) => {
+                        self.open_file = None;
+                    }
                     other => {
                         println!("[{}]: {}: {:?}", self.name, "Unknown event".red(), other);
                         self.stop();
@@ -177,7 +224,8 @@ impl<'a> App<'a> {
 }
 
 fn main() {
-    App::new("server".to_string()).run();
+    let cli = Cli::parse();
+    App::new(cli).run();
 
     // let mut message_writer =
     //     MessageWriter::new(TransportWriter::new(SERVER_TRANSPORT, Box::new(master)));

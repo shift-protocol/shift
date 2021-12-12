@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "toffee",
+    "tools",
+]
+
+[profile.release]
+# strip = true
+lto = true
+panic = "abort"
