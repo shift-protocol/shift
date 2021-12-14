@@ -32,7 +32,7 @@ pub enum State {
     InboundTransfer(api::SendRequest, Option<api::OpenFile>),
     InboundFileTransfer(api::SendRequest, Option<OpenFile>),
     OutboundTransferRequested(api::SendRequest),
-    OutboundTransferOffered(api::SendRequest),
+    OutboundTransferOffered(api::ReceiveRequest),
     OutboundTransfer(api::SendRequest, Option<api::OpenFile>),
     OutboundFileTransfer(api::SendRequest, Option<OpenFile>),
     Disconnected,
@@ -192,8 +192,7 @@ impl<'a> Client<'a> {
 
             (State::Idle, Input::RequestOutboundTransfer(transfer)) => {
                 self.transition(State::OutboundTransferRequested(transfer.clone()));
-                self.writer
-                    .write(Content::SendRequest(transfer.clone()))?;
+                self.writer.write(Content::SendRequest(transfer.clone()))?;
             }
 
             (
@@ -264,8 +263,10 @@ impl<'a> Client<'a> {
             }
 
             (
-                State::InboundFileTransfer(_, _) | State::InboundTransfer(_, _) |
-                State::OutboundFileTransfer(_, _) | State::OutboundTransfer(_, _),
+                State::InboundFileTransfer(_, _)
+                | State::InboundTransfer(_, _)
+                | State::OutboundFileTransfer(_, _)
+                | State::OutboundTransfer(_, _),
                 Input::CloseTransfer,
             ) => {
                 self.transition(State::Idle);
@@ -275,13 +276,23 @@ impl<'a> Client<'a> {
             }
 
             (
-                State::InboundFileTransfer(_, _) | State::InboundTransfer(_, _) |
-                State::OutboundFileTransfer(_, _) | State::OutboundTransfer(_, _),
+                State::InboundFileTransfer(_, _)
+                | State::InboundTransfer(_, _)
+                | State::OutboundFileTransfer(_, _)
+                | State::OutboundTransfer(_, _),
                 Input::IncomingMessage(Content::CloseTransfer(_)),
             ) => {
                 self.transition(State::Idle);
                 self.push_event(ClientEvent::TransferClosed);
             }
+
+            (
+                _,
+                Input::CloseTransfer
+                | Input::CloseFile
+                | Input::IncomingMessage(Content::CloseTransfer(_))
+                | Input::IncomingMessage(Content::CloseFile(_)),
+            ) => {}
 
             (_, input) => {
                 return Err(ClientError {
@@ -312,17 +323,11 @@ impl<'a> Client<'a> {
         self.consume(Input::IncomingMessage(msg))
     }
 
-    pub fn request_inbound_transfer(
-        &mut self,
-        request: api::ReceiveRequest,
-    ) -> ClientResult {
+    pub fn request_inbound_transfer(&mut self, request: api::ReceiveRequest) -> ClientResult {
         self.consume(Input::RequestInboundTransfer(request))
     }
 
-    pub fn request_outbound_transfer(
-        &mut self,
-        request: api::SendRequest,
-    ) -> ClientResult {
+    pub fn request_outbound_transfer(&mut self, request: api::SendRequest) -> ClientResult {
         self.consume(Input::RequestOutboundTransfer(request))
     }
 

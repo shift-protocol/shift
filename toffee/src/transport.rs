@@ -1,9 +1,9 @@
 use base64;
 use bytes::{Bytes, BytesMut};
 use cancellation::*;
+use nonblock::NonBlockingReader;
 use std::io::{self, Read, Write};
 use twoway;
-use nonblock::NonBlockingReader;
 
 #[derive(Clone)]
 pub struct TransportConfig<'a> {

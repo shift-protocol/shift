@@ -13,12 +13,11 @@ message FileInfo {
 }
 
 message ReceiveRequest {
-    bool allowDirectories = 2;
-    bool allowMultiple = 3;
+    bool allowDirectories = 1;
 }
 
 message SendRequest {
-    FileInfo fileInfo = 2;
+    FileInfo fileInfo = 1;
 }
 
 message AcceptTransfer { }
@@ -26,11 +25,11 @@ message AcceptTransfer { }
 message RejectTransfer { }
 
 message OpenFile {
-    FileInfo fileInfo = 2;
+    FileInfo fileInfo = 1;
 }
 
 message FileOpened {
-    uint64 continueFrom = 2;
+    uint64 continueFrom = 1;
 }
 
 message Chunk {

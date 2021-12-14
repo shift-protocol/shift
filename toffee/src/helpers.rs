@@ -1,10 +1,14 @@
+use super::api;
+use super::machine::Client;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::sync::{Arc, Mutex};
-use super::api;
-use super::machine::Client;
 
-pub fn send_file(client: Arc<Mutex<Client>>, mut position: u64, path: String) -> std::io::Result<()> {
+pub fn send_file(
+    client: Arc<Mutex<Client>>,
+    mut position: u64,
+    path: String,
+) -> std::io::Result<()> {
     const CAP: usize = 1024 * 128;
     let mut file = File::open(path)?;
     file.seek(SeekFrom::Start(position))?;

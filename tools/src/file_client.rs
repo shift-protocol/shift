@@ -1,65 +1,98 @@
 use cancellation::*;
 use colored::*;
-use ctrlc;
-use std::io;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
-use std::sync::{mpsc::Receiver, Arc, Mutex};
+use std::path::{Path, PathBuf};
+use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc, Mutex};
 use toffee::api;
 use toffee::helpers::send_file;
-use toffee::pty::{enable_raw_mode, restore_mode};
 use toffee::{
-    Client, ClientEvent, MessageOutput, MessageReader, MessageWriter, TransportWriter,
-    CLIENT_TRANSPORT, SERVER_TRANSPORT,
+    Client, ClientEvent, MessageOutput, MessageReader, MessageWriter, TransportWriter, TRANSPORT,
 };
 
 pub struct FileClient<'a> {
     name: String,
     client: Arc<Mutex<Client<'a>>>,
     current_path: Option<String>,
+    output: Option<Box<dyn Write + Send>>,
+    open_file: Option<File>,
 }
 
 pub trait FileClientDelegate<'a> {
-    fn on_idle(&mut self, client: &mut FileClient<'a>);
+    fn on_idle(&mut self, _client: &mut FileClient<'a>) {}
+    fn on_inbound_transfer_request(&mut self, _request: &api::SendRequest) -> bool {
+        false
+    }
+    fn on_inbound_transfer_file(&mut self, _file: &api::OpenFile) -> Option<PathBuf> {
+        None
+    }
+    fn on_outbound_transfer_request(&mut self, _request: &api::ReceiveRequest) {}
+    fn on_transfer_closed(&mut self) {}
+    fn on_disconnect(&mut self) {}
 }
 
 impl<'a> FileClient<'a> {
-    pub fn new(name: String) -> Self {
-        let stdout = io::stdout();
-
+    pub fn new(
+        name: String,
+        data_stream_out: Box<dyn Write + Send>,
+        output: Option<Box<dyn Write + Send>>,
+    ) -> Self {
         Self {
             name,
             client: Arc::new(Mutex::new(Client::new(MessageWriter::new(
-                TransportWriter::new(CLIENT_TRANSPORT, Box::new(stdout)),
+                TransportWriter::new(TRANSPORT, Box::new(data_stream_out)),
             )))),
             current_path: None,
+            output,
+            open_file: None,
         }
     }
 
-    pub fn run<D>(&mut self, announce: bool, delegate: &mut D, token: &CancellationToken)
-    where
+    pub fn run<D, S>(
+        &mut self,
+        announce: bool,
+        input: &mut S,
+        delegate: &mut D,
+        token: &CancellationToken,
+    ) where
         D: FileClientDelegate<'a>,
+        S: Read + Send,
     {
         if announce {
             self.client.lock().unwrap().start().unwrap();
         }
+
+        let input_closed = Arc::new(AtomicBool::new(false));
+
         crossbeam::scope(|scope| {
             let (tx, rx) = std::sync::mpsc::channel();
 
             let reader_thread = scope.spawn({
                 let client = self.client.clone();
-                let mut stdin = io::stdin();
+                let mut output = self.output.take();
+                let input_closed = input_closed.clone();
                 let tx = tx.clone();
                 move |_| {
                     tx.send(0).unwrap();
-                    let mut reader = MessageReader::new(SERVER_TRANSPORT);
-                    for msg in reader.feed_from(&mut stdin, &token) {
-                        if let MessageOutput::Message(msg) = msg {
-                            client.lock().unwrap().feed_message(msg).unwrap();
-                            tx.send(0).unwrap();
+                    let mut reader = MessageReader::new(TRANSPORT);
+                    for msg in reader.feed_from(input, &token) {
+                        match msg {
+                            MessageOutput::Message(msg) => {
+                                client.lock().unwrap().feed_message(msg).unwrap();
+                                tx.send(0).unwrap();
+                            }
+                            MessageOutput::Passthrough(data) => {
+                                if let Some(ref mut output) = output {
+                                    output.write(&data).unwrap();
+                                    output.flush().unwrap();
+                                }
+                            }
                         }
                     }
+                    input_closed.store(true, Ordering::Relaxed);
+                    tx.send(0).unwrap();
                 }
             });
 
@@ -70,6 +103,11 @@ impl<'a> FileClient<'a> {
                 if events.len() == 0 {
                     rx.recv().unwrap();
                 }
+                {
+                    if input_closed.load(Ordering::Relaxed) {
+                        break 'event_loop;
+                    }
+                }
                 for event in events {
                     match event {
                         ClientEvent::Connected => {
@@ -78,6 +116,56 @@ impl<'a> FileClient<'a> {
                         ClientEvent::Disconnected => {
                             println!("[{}]: {}", self.name, "Disconnected by server".green());
                             break 'event_loop;
+                        }
+                        ClientEvent::InboundTransferOffered(request) => {
+                            if delegate.on_inbound_transfer_request(&request) {
+                                self.client.lock().unwrap().accept_transfer().unwrap();
+                            } else {
+                                self.client.lock().unwrap().reject_transfer().unwrap();
+                            }
+                        }
+                        ClientEvent::InboundFileOpening(_, file) => {
+                            match delegate.on_inbound_transfer_file(&file) {
+                                Some(path) => {
+                                    let mut file;
+                                    if path.exists() {
+                                        file = OpenOptions::new()
+                                            .append(true)
+                                            .open(path.clone())
+                                            .unwrap();
+                                    } else {
+                                        file = File::create(path.clone()).unwrap();
+                                    }
+                                    let position = file.seek(SeekFrom::End(0)).unwrap();
+
+                                    self.client
+                                        .lock()
+                                        .unwrap()
+                                        .confirm_file_opened(api::FileOpened {
+                                            continue_from: position,
+                                        })
+                                        .unwrap();
+
+                                    self.open_file = Some(file);
+                                }
+                                None => {
+                                    self.client.lock().unwrap().close_transfer().unwrap();
+                                }
+                            }
+                        }
+                        ClientEvent::OutboundTransferOffered(request) => {
+                            delegate.on_outbound_transfer_request(&request);
+                        }
+                        ClientEvent::Chunk(chunk) => {
+                            println!(
+                                "[{}]: {}: {:?}",
+                                self.name,
+                                "Got chunk".green(),
+                                chunk.data.len(),
+                            );
+                            if let Some(file) = &mut self.open_file {
+                                file.write(&chunk.data).unwrap();
+                            }
                         }
                         ClientEvent::TransferAccepted() => {
                             println!("[{}]: {}", self.name, "Transfer accepted".green());
@@ -106,10 +194,12 @@ impl<'a> FileClient<'a> {
                             });
                         }
                         ClientEvent::FileClosed(_) => {
+                            self.open_file = None;
                             self.client.lock().unwrap().close_transfer().unwrap();
                         }
                         ClientEvent::TransferClosed => {
                             println!("[{}]: {}", self.name, "Transfer closed".green());
+                            delegate.on_transfer_closed();
                             delegate.on_idle(self);
                         }
                         other => {
@@ -126,18 +216,23 @@ impl<'a> FileClient<'a> {
     }
 
     pub fn receive(&mut self) {
-        self.client.lock().unwrap().request_inbound_transfer(api::ReceiveRequest {
-            allow_directories: false,
-            allow_multiple: false,
-        })
-        .unwrap();
+        self.client
+            .lock()
+            .unwrap()
+            .request_inbound_transfer(api::ReceiveRequest {
+                allow_directories: false,
+            })
+            .unwrap();
     }
 
     pub fn send_file(&mut self, path: &Path) {
         let meta = std::fs::metadata(&path).unwrap();
         let mode = meta.permissions().mode();
         println!("[{}]: {}", self.name, "Requesting transfer".green());
-        self.client.lock().unwrap().request_outbound_transfer(api::SendRequest {
+        self.client
+            .lock()
+            .unwrap()
+            .request_outbound_transfer(api::SendRequest {
                 file_info: Some(api::FileInfo {
                     name: path
                         .file_name()

@@ -1,21 +1,10 @@
 use cancellation::*;
-use colored::*;
+use clap::{self, AppSettings, Parser, Subcommand};
 use ctrlc;
 use std::io;
-use std::os::unix::fs::MetadataExt;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::rc::Rc;
-use std::cell::RefCell;
-use toffee::api;
-use toffee::helpers::send_file;
 use toffee::pty::{enable_raw_mode, restore_mode};
-use toffee::{
-    Client, ClientEvent, MessageOutput, MessageReader, MessageWriter, TransportWriter,
-    CLIENT_TRANSPORT, SERVER_TRANSPORT,
-};
-use clap::{self, Parser, AppSettings, Subcommand};
 
 mod file_client;
 use file_client::{FileClient, FileClientDelegate};
@@ -23,11 +12,11 @@ use file_client::{FileClient, FileClientDelegate};
 #[derive(Subcommand, Debug, PartialEq)]
 enum Commands {
     Send {
-        #[clap(multiple_values=true)]
+        #[clap(multiple_values = true)]
         paths: Vec<String>,
     },
     Receive {
-        #[clap(multiple_values=true)]
+        #[clap(multiple_values = true)]
         paths: Vec<String>,
     },
 }
@@ -40,20 +29,18 @@ struct Cli {
     command: Commands,
 }
 
-
 struct App<'a> {
-    name: String,
     send_mode: bool,
     remaining_receives: u32,
 
     paths: Vec<String>,
 
-    client: Rc<RefCell<FileClient<'a>>>,
+    client: Arc<Mutex<FileClient<'a>>>,
     cancellation_token_source: CancellationTokenSource,
 }
 
 impl<'a> App<'a> {
-    pub fn new(name: String, args: Cli) -> Self {
+    pub fn new(args: Cli) -> Self {
         let _paths;
         let send_mode;
         match args.command {
@@ -67,11 +54,14 @@ impl<'a> App<'a> {
             }
         }
         Self {
-            name,
             send_mode,
             paths: _paths,
             remaining_receives: 1,
-            client: Rc::new(RefCell::new(FileClient::new("client".to_string()))),
+            client: Arc::new(Mutex::new(FileClient::new(
+                "client".to_string(),
+                Box::new(io::stdout()),
+                None,
+            ))),
             cancellation_token_source: CancellationTokenSource::new(),
         }
     }
@@ -79,10 +69,8 @@ impl<'a> App<'a> {
     pub fn run(&mut self) {
         let token = self.cancellation_token_source.token().clone();
         let client = self.client.clone();
-        client.borrow_mut().run(true, self, &token);
-    }
-
-    fn stop(&mut self) {
+        let mut stdin = io::stdin();
+        client.lock().unwrap().run(true, &mut stdin, self, &token);
     }
 }
 
@@ -99,10 +87,10 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
         } else {
             if self.remaining_receives > 0 {
                 self.remaining_receives -= 1;
+                client.receive();
+            } else {
                 client.disconnect();
                 std::process::exit(0);
-            } else {
-                self.stop();
             }
         }
     }
@@ -118,7 +106,7 @@ fn main() {
     })
     .unwrap();
 
-    App::new("client".to_string(), cli).run();
+    App::new(cli).run();
 
     restore_mode(0, old_mode);
 }
