@@ -140,7 +140,7 @@ impl<'a> Client<'a> {
                     .write(Content::ReceiveRequest(transfer.clone()))?;
             }
 
-            (State::Idle, Input::IncomingMessage(Content::SendRequest(transfer))) => {
+            (State::Idle | State::InboundTransferRequested(_), Input::IncomingMessage(Content::SendRequest(transfer))) => {
                 self.push_event(ClientEvent::InboundTransferOffered(transfer.clone()));
                 self.transition(State::InboundTransferOffered(transfer.clone()));
             }

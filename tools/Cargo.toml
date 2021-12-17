@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-toffee = { path = "../toffee" }
+shift = { path = "../shift" }
 pty = "0.2"
 ctrlc = "3.2"
 termios = "0.3"

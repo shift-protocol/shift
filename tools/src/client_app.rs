@@ -1,10 +1,12 @@
 use cancellation::*;
 use clap::{self, AppSettings, Parser, Subcommand};
 use ctrlc;
+use path_clean::PathClean;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use toffee::pty::{enable_raw_mode, restore_mode};
+use shift::pty::{enable_raw_mode, restore_mode};
+use shift::api;
 
 mod file_client;
 use file_client::{FileClient, FileClientDelegate};
@@ -37,6 +39,7 @@ struct App<'a> {
 
     client: Arc<Mutex<FileClient<'a>>>,
     cancellation_token_source: CancellationTokenSource,
+    current_inbound_transfer: Option<api::SendRequest>,
 }
 
 impl<'a> App<'a> {
@@ -63,6 +66,7 @@ impl<'a> App<'a> {
                 None,
             ))),
             cancellation_token_source: CancellationTokenSource::new(),
+            current_inbound_transfer: None,
         }
     }
 
@@ -93,6 +97,28 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
                 std::process::exit(0);
             }
         }
+    }
+
+    fn on_inbound_transfer_request(&mut self, request: &api::SendRequest) -> bool {
+        if self.send_mode {
+            return false
+        }
+        println!("[clinet]: inbound request {:?}", request);
+        self.current_inbound_transfer = Some(request.clone());
+        return true;
+    }
+
+    fn on_inbound_transfer_file(&mut self, file: &api::OpenFile) -> Option<PathBuf> {
+        if self.send_mode {
+            return None
+        }
+        // TODO path check
+        let transfer = self.current_inbound_transfer.clone();
+        let rel_path = Path::new(&transfer.and_then(|x| x.file_info).map(|x| x.name).unwrap())
+            .join(file.file_info.clone().unwrap().name)
+            .clean();
+        println!("[server]: {}: {:?}", "Inbound file open", rel_path);
+        return Some(rel_path);
     }
 }
 

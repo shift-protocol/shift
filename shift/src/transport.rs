@@ -26,7 +26,7 @@ pub enum TransportOutput {
 pub struct TransportFeeder<'a> {
     reader: &'a mut TransportReader<'a>,
     stream: &'a mut dyn Read,
-    data_buffer: [u8; 1024 * 512],
+    data_buffer: Vec<u8>,
     result_buffer: Vec<TransportOutput>,
     ct: &'a CancellationToken,
 }
@@ -40,7 +40,7 @@ impl<'a> TransportFeeder<'a> {
         Self {
             reader,
             stream,
-            data_buffer: [0; 1024 * 512],
+            data_buffer: vec![0; 1024 * 512],
             result_buffer: Vec::new(),
             ct,
         }

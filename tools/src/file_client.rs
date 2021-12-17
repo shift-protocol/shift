@@ -6,9 +6,9 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc, Mutex};
-use toffee::api;
-use toffee::helpers::send_file;
-use toffee::{
+use shift::api;
+use shift::helpers::send_file;
+use shift::{
     Client, ClientEvent, MessageOutput, MessageReader, MessageWriter, TransportWriter, TRANSPORT,
 };
 
@@ -28,7 +28,7 @@ pub trait FileClientDelegate<'a> {
     fn on_inbound_transfer_file(&mut self, _file: &api::OpenFile) -> Option<PathBuf> {
         None
     }
-    fn on_outbound_transfer_request(&mut self, _request: &api::ReceiveRequest) {}
+    fn on_outbound_transfer_request(&mut self, _request: &api::ReceiveRequest, _client: &mut FileClient<'a>) {}
     fn on_transfer_closed(&mut self) {}
     fn on_disconnect(&mut self) {}
 }
@@ -154,7 +154,7 @@ impl<'a> FileClient<'a> {
                             }
                         }
                         ClientEvent::OutboundTransferOffered(request) => {
-                            delegate.on_outbound_transfer_request(&request);
+                            delegate.on_outbound_transfer_request(&request, self);
                         }
                         ClientEvent::Chunk(chunk) => {
                             println!(

@@ -1,7 +1,7 @@
 # cargo-features = ["strip"]
 
 [package]
-name = "toffee"
+name = "shift"
 version = "0.1.0"
 edition = "2018"
 
@@ -19,4 +19,4 @@ bytes = "1.1.0"
 nonblock = "0.1"
 
 [lib]
-name = "toffee"
+name = "shift"

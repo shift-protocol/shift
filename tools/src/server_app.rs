@@ -11,8 +11,8 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use toffee::api;
-use toffee::pty::{enable_raw_mode, restore_mode};
+use shift::api;
+use shift::pty::{enable_raw_mode, restore_mode};
 
 mod file_client;
 use file_client::{FileClient, FileClientDelegate};
@@ -127,18 +127,17 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
         return Some(path);
     }
 
-    fn on_outbound_transfer_request(&mut self, _request: &api::ReceiveRequest) {
+    fn on_outbound_transfer_request(&mut self, _request: &api::ReceiveRequest, client: &mut FileClient<'a>) {
         let path = Path::new(&self.work_dir);
         let item = path.read_dir().unwrap().next();
         match item {
-            Some(_item) => {
-                // let item = item.unwrap();
-                // self.open_file = Some(File::open(item.path()).unwrap());
-                // TODO
+            Some(item) => {
+                let item = item.unwrap();
+                client.send_file(&item.path());
             }
             None => {
                 println!("[server]: {}", "No files to send".green());
-                self.client.lock().unwrap().disconnect();
+                client.disconnect();
             }
         }
     }
