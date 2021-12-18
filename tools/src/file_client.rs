@@ -9,15 +9,19 @@ use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc, Mutex};
 use shift::api;
 use shift::helpers::send_file;
 use shift::{
-    Client, ClientEvent, MessageOutput, MessageReader, MessageWriter, TransportWriter, TRANSPORT,
+    Client, ClientEvent, MessageOutput, MessageReader, MessageWriter, TransportWriter, TRANSPORT, OpenFile
 };
+
+type ProgressCallback<'a> = Box<dyn FnMut(&OpenFile, u64, u64) + Send + 'a>;
 
 pub struct FileClient<'a> {
     name: String,
+    buffer_size: usize,
     client: Arc<Mutex<Client<'a>>>,
     current_path: Option<String>,
     output: Option<Box<dyn Write + Send>>,
     open_file: Option<File>,
+    send_progress_callback: Option<ProgressCallback<'a>>,
 }
 
 pub trait FileClientDelegate<'a> {
@@ -41,12 +45,14 @@ impl<'a> FileClient<'a> {
     ) -> Self {
         Self {
             name,
+            buffer_size: 1, // TODO
             client: Arc::new(Mutex::new(Client::new(MessageWriter::new(
                 TransportWriter::new(TRANSPORT, Box::new(data_stream_out)),
             )))),
             current_path: None,
             output,
             open_file: None,
+            send_progress_callback: None,
         }
     }
 
@@ -57,7 +63,7 @@ impl<'a> FileClient<'a> {
         delegate: &mut D,
         token: &CancellationToken,
     ) where
-        D: FileClientDelegate<'a>,
+        D: FileClientDelegate<'a> + Send,
         S: Read + Send,
     {
         if announce {
@@ -157,12 +163,6 @@ impl<'a> FileClient<'a> {
                             delegate.on_outbound_transfer_request(&request, self);
                         }
                         ClientEvent::Chunk(chunk) => {
-                            println!(
-                                "[{}]: {}: {:?}",
-                                self.name,
-                                "Got chunk".green(),
-                                chunk.data.len(),
-                            );
                             if let Some(file) = &mut self.open_file {
                                 file.write(&chunk.data).unwrap();
                             }
@@ -181,14 +181,19 @@ impl<'a> FileClient<'a> {
                                 })
                                 .unwrap();
                         }
-                        ClientEvent::FileTransferStarted(_, response) => {
+                        ClientEvent::FileTransferStarted(open_file, response) => {
                             println!("[{}]: {}: {:?}", self.name, "File open".green(), response);
                             let path = self.current_path.clone().expect("Current file not set");
+                            let mut callback = self.send_progress_callback.take().expect("Callback no set");
                             scope.spawn({
                                 let client = self.client.clone();
                                 let tx = tx.clone();
+                                let buffer_size = self.buffer_size;
+                                let open_file = open_file.clone();
                                 move |_| {
-                                    send_file(client, response.continue_from, path).unwrap();
+                                    send_file(client, response.continue_from, path, buffer_size, &mut |sent, total| {
+                                        callback(&open_file, sent, total);
+                                    }).unwrap();
                                     tx.send(0).unwrap();
                                 }
                             });
@@ -225,9 +230,12 @@ impl<'a> FileClient<'a> {
             .unwrap();
     }
 
-    pub fn send_file(&mut self, path: &Path) {
+    pub fn send_file(&mut self, path: &Path, callback: ProgressCallback<'a>) {
         let meta = std::fs::metadata(&path).unwrap();
         let mode = meta.permissions().mode();
+
+        self.send_progress_callback = Some(callback);
+
         println!("[{}]: {}", self.name, "Requesting transfer".green());
         self.client
             .lock()

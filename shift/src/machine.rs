@@ -89,16 +89,16 @@ impl<'a> Client<'a> {
 
     fn transition(&mut self, state: State) {
         self.state = state;
-        println!("machine now in {:?}", self.state);
+        // println!("machine now in {:?}", self.state);
     }
 
     fn push_event(&mut self, event: ClientEvent) {
-        println!("machine event: {:?}", event);
+        // println!("machine event: {:?}", event);
         self.events.push(event);
     }
 
     fn consume(&mut self, input: Input) -> Result<(), ClientError> {
-        println!("machine input: {:?}", input);
+        // println!("machine input: {:?}", input);
         match (&self.state, input) {
             (State::Initial, Input::Start) => {
                 self.writer.write(Content::Init(api::Init {

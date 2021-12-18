@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "shift",
+    "tools",
+]
+
+[profile.release]
+# strip = 

@@ -133,7 +133,7 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
         match item {
             Some(item) => {
                 let item = item.unwrap();
-                client.send_file(&item.path());
+                client.send_file(&item.path(), Box::new(|_, _, _| {}));
             }
             None => {
                 println!("[server]: {}", "No files to send".green());

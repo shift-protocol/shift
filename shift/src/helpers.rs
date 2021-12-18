@@ -8,11 +8,13 @@ pub fn send_file(
     client: Arc<Mutex<Client>>,
     mut position: u64,
     path: String,
+    buffer_size: usize,
+    progress: &mut dyn FnMut(u64, u64),
 ) -> std::io::Result<()> {
-    const CAP: usize = 1024 * 128;
     let mut file = File::open(path)?;
+    let size = file.seek(SeekFrom::End(0))?;
     file.seek(SeekFrom::Start(position))?;
-    let mut reader = BufReader::with_capacity(CAP, file);
+    let mut reader = BufReader::with_capacity(buffer_size, file);
     loop {
         let length = {
             let buffer = reader.fill_buf()?;
@@ -28,6 +30,10 @@ pub fn send_file(
                 })
                 .unwrap();
             position += buffer.len() as u64;
+            progress(position, size);
+
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
             buffer.len()
         };
         reader.consume(length);

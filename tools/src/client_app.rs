@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use shift::pty::{enable_raw_mode, restore_mode};
 use shift::api;
+use indicatif::{ProgressBar, ProgressStyle};
 
 mod file_client;
 use file_client::{FileClient, FileClientDelegate};
@@ -87,7 +88,16 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
             }
             let path_str = self.paths.remove(0);
             let path = Path::new(&path_str).canonicalize().unwrap();
-            client.send_file(&path);
+            let bar = ProgressBar::new(1);
+            bar.set_style(ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:20.cyan/blue} {bytes_per_sec:7} {wide_msg} ETA {eta_precise}"));
+            client.send_file(&path, Box::new(move |file, sent, total| {
+                bar.set_length(total);
+                bar.set_position(sent);
+                if sent == total {
+                    bar.finish();
+                }
+            }));
         } else {
             if self.remaining_receives > 0 {
                 self.remaining_receives -= 1;
