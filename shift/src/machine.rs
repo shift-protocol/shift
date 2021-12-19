@@ -3,7 +3,7 @@ use super::message::MessageWriter;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct OpenFile {
-    info: api::FileInfo,
+    pub info: api::FileInfo,
 }
 
 #[derive(Debug, Clone)]

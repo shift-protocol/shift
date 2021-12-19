@@ -3,13 +3,14 @@ use clap::{self, Parser};
 use colored::*;
 use ctrlc;
 use path_clean::PathClean;
-use pty::fork::Fork;
+use portable_pty::{CommandBuilder, PtySize, native_pty_system, PtySystem};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use terminal_size::{Width, Height, terminal_size};
 
 use shift::api;
 use shift::pty::{enable_raw_mode, restore_mode};
@@ -28,7 +29,7 @@ struct Cli {
 }
 
 struct App<'a> {
-    master: pty::fork::Master,
+    pty: portable_pty::PtyPair,
     work_dir: String,
     client: Arc<Mutex<FileClient<'a>>>,
     old_mode: termios::Termios,
@@ -39,22 +40,36 @@ struct App<'a> {
 
 impl<'a> App<'a> {
     pub fn new(args: Cli) -> Self {
-        let fork = Box::leak(Box::new(Fork::from_ptmx().unwrap()));
+        let pty_system = native_pty_system();
+        let mut pty_pair = pty_system.openpty(PtySize {
+            rows: 24,
+            cols: 80,
+            // Not all systems support pixel_width, pixel_height,
+            // but it is good practice to set it to something
+            // that matches the size of the selected font.  That
+            // is more complex than can be shown here in this
+            // brief example though!
+            pixel_width: 0,
+            pixel_height: 0,
+        }).unwrap();
 
-        if fork.is_child().ok().is_some() {
-            println!("Starting {}", args.args[0]);
-            let _ = Command::new(&args.args[0])
-                .args(&args.args[1..])
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .unwrap()
-                .wait();
-            std::process::exit(0);
+        let size = terminal_size();
+        if let Some((Width(w), Height(h))) = size {
+            pty_pair.master.resize(PtySize {
+                rows: h,
+                cols: w,
+                pixel_width: 0,
+                pixel_height: 0,
+            }).unwrap();
         }
 
-        let master = fork.is_parent().ok().unwrap();
+        println!("Starting {}", args.args[0]);
+        let mut cmd = CommandBuilder::new(&args.args[0]);
+        cmd.cwd(std::env::current_dir().unwrap());
+        cmd.args(&args.args[1..]);
+
+        pty_pair.slave.spawn_command(cmd).expect("Could not spawn command");
+
         let old_mode = enable_raw_mode(0);
 
         ctrlc::set_handler(move || {
@@ -64,7 +79,7 @@ impl<'a> App<'a> {
         .unwrap();
 
         thread::spawn({
-            let mut master = master.clone();
+            let mut master = pty_pair.master.try_clone_writer().unwrap();
             let mut stdin = io::stdin();
             move || {
                 let mut buf = [0; 1024];
@@ -80,12 +95,13 @@ impl<'a> App<'a> {
             }
         });
 
+        let writer = pty_pair.master.try_clone_writer().unwrap();
         let mut _self = Self {
-            master: master.clone(),
+            pty: pty_pair,
             work_dir: args.directory,
             client: Arc::new(Mutex::new(FileClient::new(
                 "server".to_string(),
-                Box::new(master.clone()),
+                Box::new(writer),
                 Some(Box::new(io::stdout())),
             ))),
             old_mode,
@@ -99,7 +115,7 @@ impl<'a> App<'a> {
     pub fn run(&mut self) {
         let token = self.cancellation_token_source.token().clone();
         let client = self.client.clone();
-        let mut master = self.master.clone();
+        let mut master = self.pty.master.try_clone_reader().unwrap();
         client.lock().unwrap().run(false, &mut master, self, &token);
     }
 

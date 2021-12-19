@@ -5,7 +5,7 @@ edition = "2018"
 
 [dependencies]
 shift = { path = "../shift" }
-pty = "0.2"
+portable-pty = "0.7"
 ctrlc = "3.2"
 termios = "0.3"
 indicatif = "0.16"
@@ -15,6 +15,7 @@ crossbeam = "0.8"
 clap = { version = "3.0.0-rc.4", features = ["derive"] }
 path-clean = "0.1.0"
 bytes = "1.1.0"
+terminal_size = "0.1.17"
 
 [[bin]]
 name = "server"

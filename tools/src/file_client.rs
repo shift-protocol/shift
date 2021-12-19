@@ -45,7 +45,7 @@ impl<'a> FileClient<'a> {
     ) -> Self {
         Self {
             name,
-            buffer_size: 1, // TODO
+            buffer_size: 1024 * 512,
             client: Arc::new(Mutex::new(Client::new(MessageWriter::new(
                 TransportWriter::new(TRANSPORT, Box::new(data_stream_out)),
             )))),

@@ -19,7 +19,7 @@
                     "kind": "bin"
                 }
             },
-            "args": ["--directory", "temp", "--", "./target/release/client", "send", "Cargo.toml"],
+            "args": ["--directory", "temp", "--", "./target/debug/client", "send", "Cargo.lock"],
             "cwd": "${workspaceFolder}"
         },
         {

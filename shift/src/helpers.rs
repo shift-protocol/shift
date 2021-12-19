@@ -32,8 +32,6 @@ pub fn send_file(
             position += buffer.len() as u64;
             progress(position, size);
 
-            std::thread::sleep(std::time::Duration::from_millis(100));
-
             buffer.len()
         };
         reader.consume(length);

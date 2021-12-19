@@ -1,13 +1,13 @@
 use cancellation::*;
 use clap::{self, AppSettings, Parser, Subcommand};
 use ctrlc;
+use indicatif::{ProgressBar, ProgressStyle};
 use path_clean::PathClean;
+use shift::api;
+use shift::pty::{enable_raw_mode, restore_mode};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use shift::pty::{enable_raw_mode, restore_mode};
-use shift::api;
-use indicatif::{ProgressBar, ProgressStyle};
 
 mod file_client;
 use file_client::{FileClient, FileClientDelegate};
@@ -90,14 +90,18 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
             let path = Path::new(&path_str).canonicalize().unwrap();
             let bar = ProgressBar::new(1);
             bar.set_style(ProgressStyle::default_bar()
-                .template("[{elapsed_precise}] {bar:20.cyan/blue} {bytes_per_sec:7} {wide_msg} ETA {eta_precise}"));
-            client.send_file(&path, Box::new(move |file, sent, total| {
-                bar.set_length(total);
-                bar.set_position(sent);
-                if sent == total {
-                    bar.finish();
-                }
-            }));
+                .template("{bytes}/{total_bytes} {bar:20.cyan/blue} {wide_msg} {bytes_per_sec:7} ETA {eta_precise}"));
+            client.send_file(
+                &path,
+                Box::new(move |file, sent, total| {
+                    bar.set_length(total);
+                    bar.set_position(sent);
+                    bar.set_message(file.info.name.clone());
+                    if sent == total {
+                        bar.finish();
+                    }
+                }),
+            );
         } else {
             if self.remaining_receives > 0 {
                 self.remaining_receives -= 1;
@@ -111,23 +115,23 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
 
     fn on_inbound_transfer_request(&mut self, request: &api::SendRequest) -> bool {
         if self.send_mode {
-            return false
+            return false;
         }
-        println!("[clinet]: inbound request {:?}", request);
+        // println!("[clinet]: inbound request {:?}", request);
         self.current_inbound_transfer = Some(request.clone());
         return true;
     }
 
     fn on_inbound_transfer_file(&mut self, file: &api::OpenFile) -> Option<PathBuf> {
         if self.send_mode {
-            return None
+            return None;
         }
         // TODO path check
         let transfer = self.current_inbound_transfer.clone();
         let rel_path = Path::new(&transfer.and_then(|x| x.file_info).map(|x| x.name).unwrap())
             .join(file.file_info.clone().unwrap().name)
             .clean();
-        println!("[server]: {}: {:?}", "Inbound file open", rel_path);
+        // println!("[client]: {}: {:?}", "Inbound file open", rel_path);
         return Some(rel_path);
     }
 }
