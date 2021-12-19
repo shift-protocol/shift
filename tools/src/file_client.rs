@@ -168,7 +168,6 @@ impl<'a> FileClient<'a> {
                             }
                         }
                         ClientEvent::TransferAccepted() => {
-                            println!("[{}]: {}", self.name, "Transfer accepted".green());
                             self.client
                                 .lock()
                                 .unwrap()
@@ -236,7 +235,6 @@ impl<'a> FileClient<'a> {
 
         self.send_progress_callback = Some(callback);
 
-        println!("[{}]: {}", self.name, "Requesting transfer".green());
         self.client
             .lock()
             .unwrap()

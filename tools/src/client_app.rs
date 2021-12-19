@@ -91,12 +91,15 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
             let bar = ProgressBar::new(1);
             bar.set_style(ProgressStyle::default_bar()
                 .template("{bytes}/{total_bytes} {bar:20.cyan/blue} {wide_msg} {bytes_per_sec:7} ETA {eta_precise}"));
+            bar.set_message(path.file_name().unwrap().to_string_lossy().to_string());
             client.send_file(
                 &path,
-                Box::new(move |file, sent, total| {
+                Box::new(move |_, sent, total| {
+                    if bar.position() == 0 {
+                        bar.reset_eta();
+                    }
                     bar.set_length(total);
                     bar.set_position(sent);
-                    bar.set_message(file.info.name.clone());
                     if sent == total {
                         bar.finish();
                     }
@@ -117,7 +120,6 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
         if self.send_mode {
             return false;
         }
-        // println!("[clinet]: inbound request {:?}", request);
         self.current_inbound_transfer = Some(request.clone());
         return true;
     }
@@ -131,7 +133,6 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
         let rel_path = Path::new(&transfer.and_then(|x| x.file_info).map(|x| x.name).unwrap())
             .join(file.file_info.clone().unwrap().name)
             .clean();
-        // println!("[client]: {}: {:?}", "Inbound file open", rel_path);
         return Some(rel_path);
     }
 }
