@@ -1,6 +1,7 @@
+#[cfg(test)]
 use super::*;
+#[cfg(test)]
 use bytes::{Bytes, BytesMut};
-
 
 #[test]
 fn test_reader_single() {
@@ -13,9 +14,15 @@ fn test_reader_single() {
     let mut reader = TransportReader::new(TRANSPORT);
     let result = reader.feed(&buf);
     assert_eq!(result.len(), 3);
-    assert_eq!(result[0], TransportOutput::Passthrough(Bytes::from("passthrough")));
+    assert_eq!(
+        result[0],
+        TransportOutput::Passthrough(Bytes::from("passthrough"))
+    );
     assert_eq!(result[1], TransportOutput::Packet(Bytes::from("test")));
-    assert_eq!(result[2], TransportOutput::Passthrough(Bytes::from("passthrough")));
+    assert_eq!(
+        result[2],
+        TransportOutput::Passthrough(Bytes::from("passthrough"))
+    );
 }
 
 #[test]

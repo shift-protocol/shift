@@ -3,14 +3,12 @@ use clap::{self, Parser};
 use colored::*;
 use ctrlc;
 use path_clean::PathClean;
-use portable_pty::{CommandBuilder, PtySize, native_pty_system, PtySystem};
-use std::fs::{File, OpenOptions};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use terminal_size::{Width, Height, terminal_size};
+use terminal_size::{terminal_size, Height, Width};
 
 use shift::api;
 use shift::pty::{enable_raw_mode, restore_mode};
@@ -41,26 +39,31 @@ struct App<'a> {
 impl<'a> App<'a> {
     pub fn new(args: Cli) -> Self {
         let pty_system = native_pty_system();
-        let mut pty_pair = pty_system.openpty(PtySize {
-            rows: 24,
-            cols: 80,
-            // Not all systems support pixel_width, pixel_height,
-            // but it is good practice to set it to something
-            // that matches the size of the selected font.  That
-            // is more complex than can be shown here in this
-            // brief example though!
-            pixel_width: 0,
-            pixel_height: 0,
-        }).unwrap();
+        let pty_pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                // Not all systems support pixel_width, pixel_height,
+                // but it is good practice to set it to something
+                // that matches the size of the selected font.  That
+                // is more complex than can be shown here in this
+                // brief example though!
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
 
         let size = terminal_size();
         if let Some((Width(w), Height(h))) = size {
-            pty_pair.master.resize(PtySize {
-                rows: h,
-                cols: w,
-                pixel_width: 0,
-                pixel_height: 0,
-            }).unwrap();
+            pty_pair
+                .master
+                .resize(PtySize {
+                    rows: h,
+                    cols: w,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .unwrap();
         }
 
         println!("Starting {}", args.args[0]);
@@ -68,7 +71,10 @@ impl<'a> App<'a> {
         cmd.cwd(std::env::current_dir().unwrap());
         cmd.args(&args.args[1..]);
 
-        pty_pair.slave.spawn_command(cmd).expect("Could not spawn command");
+        pty_pair
+            .slave
+            .spawn_command(cmd)
+            .expect("Could not spawn command");
 
         let old_mode = enable_raw_mode(0);
 
@@ -128,7 +134,6 @@ impl<'a> App<'a> {
 
 impl<'a> FileClientDelegate<'a> for App<'a> {
     fn on_inbound_transfer_request(&mut self, request: &api::SendRequest) -> bool {
-        println!("[server]: inbound request {:?}", request);
         self.current_inbound_transfer = Some(request.clone());
         return true;
     }
@@ -139,17 +144,21 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
             .join(file.file_info.clone().unwrap().name)
             .clean();
         let path = PathBuf::from(&self.work_dir).join(rel_path);
-        println!("[server]: {}: {:?}", "Inbound file open".green(), path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         return Some(path);
     }
 
-    fn on_outbound_transfer_request(&mut self, _request: &api::ReceiveRequest, client: &mut FileClient<'a>) {
+    fn on_outbound_transfer_request(
+        &mut self,
+        _request: &api::ReceiveRequest,
+        client: &mut FileClient<'a>,
+    ) {
         let path = Path::new(&self.work_dir);
         let item = path.read_dir().unwrap().next();
         match item {
             Some(item) => {
                 let item = item.unwrap();
-                client.send_file(&item.path(), Box::new(|_, _, _| {}));
+                client.send(&item.path(), Box::new(|_, _, _| {}));
             }
             None => {
                 println!("[server]: {}", "No files to send".green());

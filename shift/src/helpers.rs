@@ -2,12 +2,13 @@ use super::api;
 use super::machine::Client;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 pub fn send_file(
     client: Arc<Mutex<Client>>,
     mut position: u64,
-    path: String,
+    path: &Path,
     buffer_size: usize,
     progress: &mut dyn FnMut(u64, u64),
 ) -> std::io::Result<()> {

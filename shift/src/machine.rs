@@ -140,7 +140,10 @@ impl<'a> Client<'a> {
                     .write(Content::ReceiveRequest(transfer.clone()))?;
             }
 
-            (State::Idle | State::InboundTransferRequested(_), Input::IncomingMessage(Content::SendRequest(transfer))) => {
+            (
+                State::Idle | State::InboundTransferRequested(_),
+                Input::IncomingMessage(Content::SendRequest(transfer)),
+            ) => {
                 self.push_event(ClientEvent::InboundTransferOffered(transfer.clone()));
                 self.transition(State::InboundTransferOffered(transfer.clone()));
             }
@@ -247,7 +250,7 @@ impl<'a> Client<'a> {
             (State::OutboundFileTransfer(transfer, Some(file)), Input::CloseFile) => {
                 let transfer = transfer.clone();
                 let file = file.clone();
-                self.transition(State::OutboundFileTransfer(transfer, None));
+                self.transition(State::OutboundTransfer(transfer, None));
                 self.writer.write(Content::CloseFile(api::CloseFile {}))?;
                 self.push_event(ClientEvent::FileClosed(file.clone()));
             }

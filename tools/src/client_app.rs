@@ -90,11 +90,14 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
             let path = Path::new(&path_str).canonicalize().unwrap();
             let bar = ProgressBar::new(1);
             bar.set_style(ProgressStyle::default_bar()
-                .template("{bytes}/{total_bytes} {bar:20.cyan/blue} {wide_msg} {bytes_per_sec:7} ETA {eta_precise}"));
-            bar.set_message(path.file_name().unwrap().to_string_lossy().to_string());
-            client.send_file(
+                .template("{bar:20.cyan/blue} {wide_msg} {bytes}/{total_bytes}  ETA {eta_precise}  {bytes_per_sec:10}"));
+            bar.set_message("Preparing");
+            client.send(
                 &path,
-                Box::new(move |_, sent, total| {
+                Box::new(move |file, sent, total| {
+                    if file.info.name != "." {
+                        bar.set_message(file.info.name.clone());
+                    }
                     if bar.position() == 0 {
                         bar.reset_eta();
                     }

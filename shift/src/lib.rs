@@ -11,5 +11,4 @@ pub use self::machine::{Client, ClientEvent, OpenFile};
 pub use self::message::{MessageOutput, MessageReader, MessageWriter};
 pub use self::transport::{TransportConfig, TransportOutput, TransportReader, TransportWriter};
 
-
 mod transport_tests;

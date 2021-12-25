@@ -1,7 +1,6 @@
 use base64;
 use bytes::{Bytes, BytesMut};
 use cancellation::*;
-use nonblock::NonBlockingReader;
 use std::io::{self, Read, Write};
 use twoway;
 
@@ -99,7 +98,6 @@ impl<'a> TransportReader<'a> {
         if self.in_sequence {
             match self.feed_remainder(&remaining_data) {
                 RemainderFeedResult::Buffered => {
-                    remaining_data = Bytes::new();
                     return result;
                 }
                 RemainderFeedResult::PacketParsed { packet, rest } => {
@@ -119,10 +117,8 @@ impl<'a> TransportReader<'a> {
                     }
                     remaining_data = remaining_data.slice(start_index + self.config.prefix.len()..);
 
-                    let mut got_new_remainder = false;
                     match self.feed_remainder(&remaining_data) {
                         RemainderFeedResult::Buffered => {
-                            remaining_data = Bytes::new();
                             break;
                         }
                         RemainderFeedResult::PacketParsed { packet, rest } => {
@@ -130,9 +126,6 @@ impl<'a> TransportReader<'a> {
                             remaining_data = rest;
                         }
                     }
-                    // if !got_new_remainder {
-                    //     break;
-                    // }
                 }
                 None => {
                     if remaining_data.len() > 0 {
@@ -158,7 +151,7 @@ impl<'a> TransportReader<'a> {
                 self.in_sequence = false;
                 return RemainderFeedResult::PacketParsed {
                     packet,
-                    rest: data.slice(length + self.config.suffix.len()..)
+                    rest: data.slice(length + self.config.suffix.len()..),
                 };
             }
             None => {

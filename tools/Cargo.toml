@@ -16,6 +16,8 @@ clap = { version = "3.0.0-rc.4", features = ["derive"] }
 path-clean = "0.1.0"
 bytes = "1.1.0"
 terminal_size = "0.1.17"
+walkdir = "2"
+pathdiff = "0.2"
 
 [[bin]]
 name = "server"
