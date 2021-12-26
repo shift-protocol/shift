@@ -1,10 +1,8 @@
 on: [push, pull_request]
-
 name: Build
-
 jobs:
   check:
-    name: Check
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -16,9 +14,19 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: check
+      - run: rustup component add rustfmt
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+      - run: rustup component add clippy
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: -- -D warnings
 
   test:
-    name: Test Suite
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -31,45 +39,24 @@ jobs:
         with:
           command: test
 
-  fmt:
-    name: Rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - run: rustup component add rustfmt
-      - uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - run: rustup component add clippy
-      - uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: -- -D warnings
-
   build:
     name: Build
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, macos, windows]
-    runs-on: "${{ matrix.os }}-latest"
+        include:
+        - os: ubuntu-latest
+          label: linux
+          has_host: true
+        - os: macos-latest
+          label: mac
+          has_host: true
+        - os: windows-latest
+          label: windows
+          has_host: false
+
+    runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -77,15 +64,19 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+
       - uses: actions-rs/cargo@v1
         with:
           command: build
           args: --release
+
       - uses: actions/upload-artifact@v2
         with:
-          name: ${{ matrix.os }} client
+          name: shift-${{ matrix.label }}
           path: target/release/client
+
       - uses: actions/upload-artifact@v2
+        if: ${{ matrix.has_host }}
         with:
-          name: ${{ matrix.os }} host
+          name: shift-host-${{ matrix.label }}
           path: target/release/host
