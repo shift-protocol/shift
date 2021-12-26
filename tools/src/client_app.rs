@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use cancellation::*;
 use clap::{self, AppSettings, Parser, Subcommand};
 use ctrlc;
@@ -71,23 +72,27 @@ impl<'a> App<'a> {
         }
     }
 
-    pub fn run(&mut self) {
+    pub fn run(mut self) -> Result<()> {
         let token = self.cancellation_token_source.token().clone();
         let client = self.client.clone();
         let mut stdin = io::stdin();
-        client.lock().unwrap().run(true, &mut stdin, self, &token);
+        client
+            .lock()
+            .unwrap()
+            .run(true, &mut stdin, &mut self, &token)?;
+        Ok(())
     }
 }
 
 impl<'a> FileClientDelegate<'a> for App<'a> {
-    fn on_idle(&mut self, client: &mut FileClient<'a>) {
+    fn on_idle(&mut self, client: &mut FileClient<'a>) -> Result<()> {
         if self.send_mode {
             if self.paths.len() == 0 {
-                client.disconnect();
+                client.disconnect()?;
                 std::process::exit(0);
             }
             let path_str = self.paths.remove(0);
-            let path = Path::new(&path_str).canonicalize().unwrap();
+            let path = Path::new(&path_str).canonicalize()?;
             let bar = ProgressBar::new(1);
             bar.set_style(ProgressStyle::default_bar()
                 .template("{bar:20.cyan/blue} {wide_msg} {bytes}/{total_bytes}  ETA {eta_precise}  {bytes_per_sec:10}"));
@@ -107,16 +112,17 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
                         bar.finish();
                     }
                 }),
-            );
+            )?;
         } else {
             if self.remaining_receives > 0 {
                 self.remaining_receives -= 1;
-                client.receive();
+                client.receive()?;
             } else {
-                client.disconnect();
+                client.disconnect()?;
                 std::process::exit(0);
             }
         }
+        Ok(())
     }
 
     fn on_inbound_transfer_request(&mut self, request: &api::SendRequest) -> bool {
@@ -127,30 +133,39 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
         return true;
     }
 
-    fn on_inbound_transfer_file(&mut self, file: &api::OpenFile) -> Option<PathBuf> {
+    fn on_inbound_transfer_file(&mut self, file: &api::OpenFile) -> Result<Option<PathBuf>> {
         if self.send_mode {
-            return None;
+            return Ok(None);
         }
         // TODO path check
-        let transfer = self.current_inbound_transfer.clone();
-        let rel_path = Path::new(&transfer.and_then(|x| x.file_info).map(|x| x.name).unwrap())
-            .join(file.file_info.clone().unwrap().name)
+        let transfer = self
+            .current_inbound_transfer
+            .clone()
+            .ok_or(anyhow!("No active transfer"))?;
+        let transfer_info = &transfer.file_info.ok_or(anyhow!("Missing file info"))?;
+        let rel_path = Path::new(&transfer_info.name)
+            .join(
+                file.file_info
+                    .clone()
+                    .ok_or(anyhow!("Missing file info in request"))?
+                    .name,
+            )
             .clean();
-        return Some(rel_path);
+        return Ok(Some(rel_path));
     }
 }
 
-fn main() {
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let old_mode = enable_raw_mode(0);
+    let old_mode = enable_raw_mode(0)?;
     ctrlc::set_handler(move || {
-        restore_mode(0, old_mode);
+        restore_mode(0, old_mode).expect("Failed to restore TTY mode");
         std::process::exit(1);
-    })
-    .unwrap();
+    })?;
 
-    App::new(cli).run();
+    App::new(cli).run()?;
 
-    restore_mode(0, old_mode);
+    restore_mode(0, old_mode)?;
+    Ok(())
 }

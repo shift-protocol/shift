@@ -7,6 +7,8 @@ edition = "2018"
 shift = { path = "../shift" }
 portable-pty = "0.7"
 ctrlc = "3.2"
+anyhow = "1.0"
+thiserror = "1.0"
 termios = "0.3"
 indicatif = "0.16"
 colored = "2.0"
@@ -18,6 +20,7 @@ bytes = "1.1.0"
 terminal_size = "0.1.17"
 walkdir = "2"
 pathdiff = "0.2"
+signal-hook = "0.3"
 
 [[bin]]
 name = "server"

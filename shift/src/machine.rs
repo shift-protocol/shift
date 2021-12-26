@@ -1,5 +1,6 @@
 use super::api::{self, message::Content};
 use super::message::MessageWriter;
+use anyhow::{bail, Result};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct OpenFile {
@@ -32,7 +33,6 @@ pub enum State {
     InboundTransfer(api::SendRequest, Option<api::OpenFile>),
     InboundFileTransfer(api::SendRequest, Option<OpenFile>),
     OutboundTransferRequested(api::SendRequest),
-    OutboundTransferOffered(api::ReceiveRequest),
     OutboundTransfer(api::SendRequest, Option<api::OpenFile>),
     OutboundFileTransfer(api::SendRequest, Option<OpenFile>),
     Disconnected,
@@ -59,24 +59,12 @@ pub struct Client<'a> {
     writer: MessageWriter<'a>,
 }
 
-#[derive(Debug)]
-pub struct ClientError {
-    pub io_error: Option<std::io::Error>,
-    pub state: Option<State>,
-    pub input: Option<Input>,
+#[derive(thiserror::Error, Debug)]
+#[error("Invalid transition")]
+pub enum ClientError {
+    InvalidTransitionError { state: State, input: Input },
+    InvalidStateError(&'static str),
 }
-
-impl From<std::io::Error> for ClientError {
-    fn from(error: std::io::Error) -> Self {
-        ClientError {
-            io_error: Some(error),
-            state: None,
-            input: None,
-        }
-    }
-}
-
-pub type ClientResult = Result<(), ClientError>;
 
 impl<'a> Client<'a> {
     pub fn new(writer: MessageWriter<'a>) -> Self {
@@ -97,7 +85,7 @@ impl<'a> Client<'a> {
         self.events.push(event);
     }
 
-    fn consume(&mut self, input: Input) -> Result<(), ClientError> {
+    fn consume(&mut self, input: Input) -> Result<()> {
         // println!("machine input: {:?}", input);
         match (&self.state, input) {
             (State::Initial, Input::Start) => {
@@ -183,7 +171,9 @@ impl<'a> Client<'a> {
                 self.transition(State::InboundFileTransfer(
                     transfer,
                     Some(OpenFile {
-                        info: requested_file.file_info.clone().unwrap(),
+                        info: requested_file.file_info.clone().ok_or(
+                            ClientError::InvalidStateError("Missing open file information"),
+                        )?,
                     }),
                 ));
             }
@@ -229,7 +219,9 @@ impl<'a> Client<'a> {
                 let transfer = transfer.clone();
                 let requested_file = requested_file.clone();
                 let open_file = OpenFile {
-                    info: requested_file.file_info.clone().unwrap(),
+                    info: requested_file.file_info.clone().ok_or(
+                        ClientError::InvalidStateError("Missing file info in request"),
+                    )?,
                 };
                 self.push_event(ClientEvent::FileTransferStarted(
                     open_file.clone(),
@@ -298,11 +290,10 @@ impl<'a> Client<'a> {
             ) => {}
 
             (_, input) => {
-                return Err(ClientError {
-                    io_error: None,
-                    state: Some(self.state.clone()),
-                    input: Some(input),
-                })
+                bail!(ClientError::InvalidTransitionError {
+                    state: self.state.clone(),
+                    input: input,
+                });
             }
         }
         Ok(())
@@ -314,51 +305,51 @@ impl<'a> Client<'a> {
         return events;
     }
 
-    pub fn start(&mut self) -> ClientResult {
+    pub fn start(&mut self) -> Result<()> {
         self.consume(Input::Start)
     }
 
-    pub fn disconnect(&mut self) -> ClientResult {
+    pub fn disconnect(&mut self) -> Result<()> {
         self.consume(Input::Disconnect)
     }
 
-    pub fn feed_message(&mut self, msg: Content) -> ClientResult {
+    pub fn feed_message(&mut self, msg: Content) -> Result<()> {
         self.consume(Input::IncomingMessage(msg))
     }
 
-    pub fn request_inbound_transfer(&mut self, request: api::ReceiveRequest) -> ClientResult {
+    pub fn request_inbound_transfer(&mut self, request: api::ReceiveRequest) -> Result<()> {
         self.consume(Input::RequestInboundTransfer(request))
     }
 
-    pub fn request_outbound_transfer(&mut self, request: api::SendRequest) -> ClientResult {
+    pub fn request_outbound_transfer(&mut self, request: api::SendRequest) -> Result<()> {
         self.consume(Input::RequestOutboundTransfer(request))
     }
 
-    pub fn accept_transfer(&mut self) -> ClientResult {
+    pub fn accept_transfer(&mut self) -> Result<()> {
         self.consume(Input::AcceptTransfer)
     }
 
-    pub fn reject_transfer(&mut self) -> ClientResult {
+    pub fn reject_transfer(&mut self) -> Result<()> {
         self.consume(Input::RejectTransfer)
     }
 
-    pub fn open_file(&mut self, request: api::OpenFile) -> ClientResult {
+    pub fn open_file(&mut self, request: api::OpenFile) -> Result<()> {
         self.consume(Input::OpenFile(request))
     }
 
-    pub fn confirm_file_opened(&mut self, file: api::FileOpened) -> ClientResult {
+    pub fn confirm_file_opened(&mut self, file: api::FileOpened) -> Result<()> {
         self.consume(Input::ConfirmFileOpened(file))
     }
 
-    pub fn send_chunk(&mut self, chunk: api::Chunk) -> ClientResult {
+    pub fn send_chunk(&mut self, chunk: api::Chunk) -> Result<()> {
         self.consume(Input::SendChunk(chunk))
     }
 
-    pub fn close_file(&mut self) -> ClientResult {
+    pub fn close_file(&mut self) -> Result<()> {
         self.consume(Input::CloseFile)
     }
 
-    pub fn close_transfer(&mut self) -> ClientResult {
+    pub fn close_transfer(&mut self) -> Result<()> {
         self.consume(Input::CloseTransfer)
     }
 }

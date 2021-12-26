@@ -17,6 +17,8 @@ termios = "0.3"
 cancellation = "0.1.0"
 bytes = "1.1.0"
 nonblock = "0.1"
+anyhow = "1.0"
+thiserror = "1.0"
 
 [lib]
 name = "shift"
