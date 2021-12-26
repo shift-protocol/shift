@@ -22,7 +22,7 @@ thiserror = "1.0"
 termios = "0.3"
 
 [dev-dependencies]
-cargo-husky = { version = "1", features = ["run-cargo-clippy", "run-cargo-fmt", "precommit-hook", "run-for-all"] }
+cargo-husky = { version = "1", features = ["run-cargo-clippy", "run-cargo-fmt", "precommit-hook"] }
 
 [lib]
 name = "shift"

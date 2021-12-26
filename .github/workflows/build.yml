@@ -40,7 +40,6 @@ jobs:
           command: test
 
   build:
-    name: Build
     strategy:
       fail-fast: false
       matrix:
@@ -55,6 +54,7 @@ jobs:
           label: windows
           has_host: false
 
+    name: Build (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
 
     steps:

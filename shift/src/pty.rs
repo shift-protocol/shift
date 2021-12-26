@@ -1,4 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
+
+#[cfg(target_family = "unix")]
+use anyhow::Context;
 
 #[cfg(target_family = "unix")]
 use std::os::unix::io::RawFd;
@@ -30,11 +33,11 @@ pub fn restore_mode(fd: RawFd, old_termios: Termios) -> Result<()> {
 }
 
 #[cfg(target_family = "windows")]
-pub fn enable_raw_mode(fd: u32) -> Result<u32> {
+pub fn enable_raw_mode(_: u32) -> Result<u32> {
     Ok(0)
 }
 
 #[cfg(target_family = "windows")]
-pub fn restore_mode(fd: u32, old_termios: u32) -> Result<()> {
+pub fn restore_mode(_: u32, _: u32) -> Result<()> {
     Ok(())
 }
