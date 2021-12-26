@@ -47,12 +47,15 @@ jobs:
         - os: ubuntu-latest
           label: linux
           has_host: true
+          client_path: target/release/client
         - os: macos-latest
           label: mac
           has_host: true
+          client_path: target/release/client
         - os: windows-latest
           label: windows
           has_host: false
+          client_path: target/release/client.exe
 
     name: Build (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
@@ -73,7 +76,7 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: shift-${{ matrix.label }}
-          path: target/release/client
+          path: ${{ matrix.client_path }}
 
       - uses: actions/upload-artifact@v2
         if: ${{ matrix.has_host }}
