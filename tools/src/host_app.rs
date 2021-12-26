@@ -13,4 +13,4 @@ fn main() -> Result<()> {
 }
 
 #[cfg(target_family = "windows")]
-fn main() { }
+fn main() {}

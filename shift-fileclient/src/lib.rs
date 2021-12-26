@@ -6,7 +6,7 @@ use shift::{
     MessageOutput, MessageReader, MessageWriter, OpenFile, ShiftClient, ShiftClientEvent,
     TransportWriter, TRANSPORT,
 };
-use std::fs::{File, OpenOptions, Metadata};
+use std::fs::{File, Metadata, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc, Mutex};
@@ -21,7 +21,11 @@ fn get_file_mode(metadata: &Metadata) -> u32 {
 
 #[cfg(target_family = "windows")]
 fn get_file_mode(metadata: &Metadata) -> u32 {
-    if metadata.is_dir() { 0o755 } else { 0o644 }
+    if metadata.is_dir() {
+        0o755
+    } else {
+        0o644
+    }
 }
 
 type ProgressCallback<'a> = Box<dyn FnMut(&OpenFile, u64, u64) + Send + 'a>;
@@ -383,9 +387,9 @@ impl<'a> ShiftFileClient<'a> {
             );
 
             self.total_bytes_sent = 0;
-            self.total_bytes_to_send = entries.iter().try_fold(0, |acc, p| -> Result<u64> {
-                Ok(acc + p.metadata()?.len())
-            })?;
+            self.total_bytes_to_send = entries
+                .iter()
+                .try_fold(0, |acc, p| -> Result<u64> { Ok(acc + p.metadata()?.len()) })?;
         } else {
             self.remaining_files_to_send = Some(vec![PathBuf::from(".")]);
         }
