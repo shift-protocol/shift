@@ -1,24 +1,23 @@
 use anyhow::{anyhow, Result};
 use cancellation::*;
 use clap::{self, AppSettings, Parser, Subcommand};
-use ctrlc;
 use indicatif::{ProgressBar, ProgressStyle};
 use path_clean::PathClean;
 use shift::api;
 use shift::pty::{enable_raw_mode, restore_mode};
+use shift_fileclient::{ShiftFileClient, ShiftFileClientDelegate};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-mod file_client;
-use file_client::{FileClient, FileClientDelegate};
-
 #[derive(Subcommand, Debug, PartialEq)]
 enum Commands {
+    /// Send files or directories
     Send {
         #[clap(multiple_values = true)]
         paths: Vec<String>,
     },
+    /// Receive files or directories
     Receive {
         #[clap(multiple_values = true)]
         paths: Vec<String>,
@@ -26,6 +25,7 @@ enum Commands {
 }
 
 #[derive(Parser, Debug)]
+#[clap(name = "shift")]
 #[clap(version)]
 #[clap(setting(AppSettings::SubcommandRequiredElseHelp))]
 struct Cli {
@@ -39,7 +39,7 @@ struct App<'a> {
 
     paths: Vec<String>,
 
-    client: Arc<Mutex<FileClient<'a>>>,
+    client: Arc<Mutex<ShiftFileClient<'a>>>,
     cancellation_token_source: CancellationTokenSource,
     current_inbound_transfer: Option<api::SendRequest>,
 }
@@ -62,8 +62,7 @@ impl<'a> App<'a> {
             send_mode,
             paths: _paths,
             remaining_receives: 1,
-            client: Arc::new(Mutex::new(FileClient::new(
-                "client".to_string(),
+            client: Arc::new(Mutex::new(ShiftFileClient::new(
                 Box::new(io::stdout()),
                 None,
             ))),
@@ -84,10 +83,10 @@ impl<'a> App<'a> {
     }
 }
 
-impl<'a> FileClientDelegate<'a> for App<'a> {
-    fn on_idle(&mut self, client: &mut FileClient<'a>) -> Result<()> {
+impl<'a> ShiftFileClientDelegate<'a> for App<'a> {
+    fn on_idle(&mut self, client: &mut ShiftFileClient<'a>) -> Result<()> {
         if self.send_mode {
-            if self.paths.len() == 0 {
+            if self.paths.is_empty() {
                 client.disconnect()?;
                 std::process::exit(0);
             }
@@ -113,14 +112,12 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
                     }
                 }),
             )?;
+        } else if self.remaining_receives > 0 {
+            self.remaining_receives -= 1;
+            client.receive()?;
         } else {
-            if self.remaining_receives > 0 {
-                self.remaining_receives -= 1;
-                client.receive()?;
-            } else {
-                client.disconnect()?;
-                std::process::exit(0);
-            }
+            client.disconnect()?;
+            std::process::exit(0);
         }
         Ok(())
     }
@@ -130,7 +127,7 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
             return false;
         }
         self.current_inbound_transfer = Some(request.clone());
-        return true;
+        true
     }
 
     fn on_inbound_transfer_file(&mut self, file: &api::OpenFile) -> Result<Option<PathBuf>> {
@@ -151,7 +148,7 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
                     .name,
             )
             .clean();
-        return Ok(Some(rel_path));
+        Ok(Some(rel_path))
     }
 }
 

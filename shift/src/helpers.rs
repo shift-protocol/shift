@@ -1,5 +1,5 @@
 use super::api;
-use super::machine::Client;
+use super::machine::ShiftClient;
 use anyhow::Result;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 pub fn send_file(
-    client: Arc<Mutex<Client>>,
+    client: Arc<Mutex<ShiftClient>>,
     mut position: u64,
     path: &Path,
     buffer_size: usize,
@@ -21,7 +21,7 @@ pub fn send_file(
         progress(position, size);
         let length = {
             let buffer = reader.fill_buf()?;
-            if buffer.len() == 0 {
+            if buffer.is_empty() {
                 break;
             }
             client.lock().unwrap().send_chunk(api::Chunk {

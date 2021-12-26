@@ -1,0 +1,15 @@
+[package]
+name = "shift-fileclient"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+shift = { path = "../shift" }
+anyhow = "1.0"
+thiserror = "1.0"
+cancellation = "0.1"
+crossbeam = "0.8"
+path-clean = "0.1.0"
+bytes = "1.1.0"
+walkdir = "2"
+pathdiff = "0.2"

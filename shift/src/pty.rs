@@ -1,7 +1,12 @@
 use anyhow::{Context, Result};
+
+#[cfg(target_family = "unix")]
 use std::os::unix::io::RawFd;
+
+#[cfg(target_family = "unix")]
 use termios::{self, Termios};
 
+#[cfg(target_family = "unix")]
 pub fn enable_raw_mode(fd: RawFd) -> Result<Termios> {
     let mut termios = Termios::from_fd(fd).with_context(|| "Failed to get PTY from FD")?;
     let old_termios = termios;
@@ -16,9 +21,20 @@ pub fn enable_raw_mode(fd: RawFd) -> Result<Termios> {
     termios.c_cflag |= termios::CS8;
     termios.c_cc[termios::VMIN] = 1;
     termios::tcsetattr(0, termios::TCSANOW, &termios)?;
-    return Ok(old_termios);
+    Ok(old_termios)
 }
 
+#[cfg(target_family = "unix")]
 pub fn restore_mode(fd: RawFd, old_termios: Termios) -> Result<()> {
     termios::tcsetattr(fd, termios::TCSANOW, &old_termios).with_context(|| "tcsetattr failed")
+}
+
+#[cfg(target_family = "windows")]
+pub fn enable_raw_mode(fd: u32) -> Result<u32> {
+    Ok(0)
+}
+
+#[cfg(target_family = "windows")]
+pub fn restore_mode(fd: u32, old_termios: u32) -> Result<()> {
+    Ok(())
 }

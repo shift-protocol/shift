@@ -1,8 +1,6 @@
-use base64;
 use bytes::{Bytes, BytesMut};
 use cancellation::*;
 use std::io::{self, Read, Write};
-use twoway;
 
 #[derive(Clone)]
 pub struct TransportConfig<'a> {
@@ -50,10 +48,10 @@ impl<'a> Iterator for TransportFeeder<'a> {
     type Item = TransportOutput;
 
     fn next(&mut self) -> Option<TransportOutput> {
-        if let None = self.ct.result().ok() {
+        if self.ct.result().is_err() {
             return None;
         }
-        while self.result_buffer.len() == 0 {
+        while self.result_buffer.is_empty() {
             let size = self.stream.read(&mut self.data_buffer).expect("read error");
             if size == 0 {
                 return None;
@@ -62,7 +60,7 @@ impl<'a> Iterator for TransportFeeder<'a> {
                 .append(&mut self.reader.feed(&self.data_buffer[..size]));
         }
 
-        if self.result_buffer.len() == 0 {
+        if self.result_buffer.is_empty() {
             return None;
         }
 
@@ -89,7 +87,7 @@ impl<'a> TransportReader<'a> {
         stream: &'a mut dyn Read,
         ct: &'a CancellationToken,
     ) -> TransportFeeder<'a> {
-        return TransportFeeder::new(self, stream, ct);
+        TransportFeeder::new(self, stream, ct)
     }
 
     pub fn feed(&mut self, data: &[u8]) -> Vec<TransportOutput> {
@@ -128,7 +126,7 @@ impl<'a> TransportReader<'a> {
                     }
                 }
                 None => {
-                    if remaining_data.len() > 0 {
+                    if !remaining_data.is_empty() {
                         result.push(TransportOutput::Passthrough(remaining_data));
                     }
                     break;
@@ -144,20 +142,20 @@ impl<'a> TransportReader<'a> {
             Some(length) => {
                 self.buffer.extend_from_slice(&data[..length]);
                 let mut packet = Bytes::new();
-                if let Some(content) = base64::decode(&self.buffer).ok() {
+                if let Ok(content) = base64::decode(&self.buffer) {
                     packet = Bytes::from(content);
                 }
                 self.buffer = vec![];
                 self.in_sequence = false;
-                return RemainderFeedResult::PacketParsed {
+                RemainderFeedResult::PacketParsed {
                     packet,
                     rest: data.slice(length + self.config.suffix.len()..),
-                };
+                }
             }
             None => {
                 self.in_sequence = true;
-                self.buffer.extend_from_slice(&data);
-                return RemainderFeedResult::Buffered;
+                self.buffer.extend_from_slice(data);
+                RemainderFeedResult::Buffered
             }
         }
     }

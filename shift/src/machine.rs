@@ -39,7 +39,7 @@ pub enum State {
 }
 
 #[derive(Debug)]
-pub enum ClientEvent {
+pub enum ShiftClientEvent {
     Connected,
     Disconnected,
     InboundTransferOffered(api::SendRequest),
@@ -53,8 +53,8 @@ pub enum ClientEvent {
     TransferClosed,
 }
 
-pub struct Client<'a> {
-    events: Vec<ClientEvent>,
+pub struct ShiftClient<'a> {
+    events: Vec<ShiftClientEvent>,
     state: State,
     writer: MessageWriter<'a>,
 }
@@ -66,9 +66,9 @@ pub enum ClientError {
     InvalidStateError(&'static str),
 }
 
-impl<'a> Client<'a> {
+impl<'a> ShiftClient<'a> {
     pub fn new(writer: MessageWriter<'a>) -> Self {
-        Client {
+        ShiftClient {
             events: vec![],
             state: State::Initial,
             writer,
@@ -80,7 +80,7 @@ impl<'a> Client<'a> {
         // println!("machine now in {:?}", self.state);
     }
 
-    fn push_event(&mut self, event: ClientEvent) {
+    fn push_event(&mut self, event: ShiftClientEvent) {
         // println!("machine event: {:?}", event);
         self.events.push(event);
     }
@@ -101,22 +101,22 @@ impl<'a> Client<'a> {
                     version: 1,
                     features: vec![],
                 }))?;
-                self.push_event(ClientEvent::Connected);
+                self.push_event(ShiftClientEvent::Connected);
                 self.transition(State::Idle);
             }
 
             (State::Connecting, Input::IncomingMessage(Content::Init(_))) => {
-                self.push_event(ClientEvent::Connected);
+                self.push_event(ShiftClientEvent::Connected);
                 self.transition(State::Idle);
             }
 
             (_, Input::IncomingMessage(Content::Disconnect(_))) => {
-                self.push_event(ClientEvent::Disconnected);
+                self.push_event(ShiftClientEvent::Disconnected);
                 self.transition(State::Disconnected);
             }
 
             (_, Input::Disconnect) => {
-                self.push_event(ClientEvent::Disconnected);
+                self.push_event(ShiftClientEvent::Disconnected);
                 self.writer.write(Content::Disconnect(api::Disconnect {}))?;
                 self.transition(State::Disconnected);
             }
@@ -124,16 +124,15 @@ impl<'a> Client<'a> {
             // Inbound transfer handling
             (State::Idle, Input::RequestInboundTransfer(transfer)) => {
                 self.transition(State::InboundTransferRequested(transfer.clone()));
-                self.writer
-                    .write(Content::ReceiveRequest(transfer.clone()))?;
+                self.writer.write(Content::ReceiveRequest(transfer))?;
             }
 
             (
                 State::Idle | State::InboundTransferRequested(_),
                 Input::IncomingMessage(Content::SendRequest(transfer)),
             ) => {
-                self.push_event(ClientEvent::InboundTransferOffered(transfer.clone()));
-                self.transition(State::InboundTransferOffered(transfer.clone()));
+                self.push_event(ShiftClientEvent::InboundTransferOffered(transfer.clone()));
+                self.transition(State::InboundTransferOffered(transfer));
             }
 
             (State::InboundTransferOffered(transfer), Input::AcceptTransfer) => {
@@ -154,11 +153,11 @@ impl<'a> Client<'a> {
                 Input::IncomingMessage(Content::OpenFile(file)),
             ) => {
                 let transfer = transfer.clone();
-                self.push_event(ClientEvent::InboundFileOpening(
+                self.push_event(ShiftClientEvent::InboundFileOpening(
                     transfer.clone(),
                     file.clone(),
                 ));
-                self.transition(State::InboundTransfer(transfer, Some(file.clone())));
+                self.transition(State::InboundTransfer(transfer, Some(file)));
             }
 
             (
@@ -167,25 +166,27 @@ impl<'a> Client<'a> {
             ) => {
                 let transfer = transfer.clone();
                 let requested_file = requested_file.clone();
-                self.writer.write(Content::FileOpened(file.clone()))?;
+                self.writer.write(Content::FileOpened(file))?;
                 self.transition(State::InboundFileTransfer(
                     transfer,
                     Some(OpenFile {
-                        info: requested_file.file_info.clone().ok_or(
-                            ClientError::InvalidStateError("Missing open file information"),
-                        )?,
+                        info: requested_file
+                            .file_info
+                            .ok_or(ClientError::InvalidStateError(
+                                "Missing open file information",
+                            ))?,
                     }),
                 ));
             }
 
             // Outbound transfer handling
             (State::Idle, Input::IncomingMessage(Content::ReceiveRequest(request))) => {
-                self.push_event(ClientEvent::OutboundTransferOffered(request));
+                self.push_event(ShiftClientEvent::OutboundTransferOffered(request));
             }
 
             (State::Idle, Input::RequestOutboundTransfer(transfer)) => {
                 self.transition(State::OutboundTransferRequested(transfer.clone()));
-                self.writer.write(Content::SendRequest(transfer.clone()))?;
+                self.writer.write(Content::SendRequest(transfer))?;
             }
 
             (
@@ -193,7 +194,7 @@ impl<'a> Client<'a> {
                 Input::IncomingMessage(Content::AcceptTransfer(_)),
             ) => {
                 let requested_transfer = requested_transfer.clone();
-                self.push_event(ClientEvent::TransferAccepted());
+                self.push_event(ShiftClientEvent::TransferAccepted());
                 self.transition(State::OutboundTransfer(requested_transfer, None));
             }
 
@@ -201,15 +202,14 @@ impl<'a> Client<'a> {
                 State::OutboundTransferRequested(_),
                 Input::IncomingMessage(Content::RejectTransfer(_)),
             ) => {
-                self.push_event(ClientEvent::TransferRejected());
+                self.push_event(ShiftClientEvent::TransferRejected());
                 self.transition(State::Idle)
             }
 
             (State::OutboundTransfer(transfer, _), Input::OpenFile(file)) => {
                 let transfer = transfer.clone();
-                let file = file.clone();
                 self.writer.write(Content::OpenFile(file.clone()))?;
-                self.transition(State::OutboundTransfer(transfer.clone(), Some(file)));
+                self.transition(State::OutboundTransfer(transfer, Some(file)));
             }
 
             (
@@ -219,13 +219,15 @@ impl<'a> Client<'a> {
                 let transfer = transfer.clone();
                 let requested_file = requested_file.clone();
                 let open_file = OpenFile {
-                    info: requested_file.file_info.clone().ok_or(
-                        ClientError::InvalidStateError("Missing file info in request"),
-                    )?,
+                    info: requested_file
+                        .file_info
+                        .ok_or(ClientError::InvalidStateError(
+                            "Missing file info in request",
+                        ))?,
                 };
-                self.push_event(ClientEvent::FileTransferStarted(
+                self.push_event(ShiftClientEvent::FileTransferStarted(
                     open_file.clone(),
-                    file.clone(),
+                    file,
                 ));
                 self.transition(State::OutboundFileTransfer(transfer, Some(open_file)));
             }
@@ -236,7 +238,7 @@ impl<'a> Client<'a> {
             }
 
             (State::InboundFileTransfer(_, _), Input::IncomingMessage(Content::Chunk(chunk))) => {
-                self.push_event(ClientEvent::Chunk(chunk));
+                self.push_event(ShiftClientEvent::Chunk(chunk));
             }
 
             (State::OutboundFileTransfer(transfer, Some(file)), Input::CloseFile) => {
@@ -244,7 +246,7 @@ impl<'a> Client<'a> {
                 let file = file.clone();
                 self.transition(State::OutboundTransfer(transfer, None));
                 self.writer.write(Content::CloseFile(api::CloseFile {}))?;
-                self.push_event(ClientEvent::FileClosed(file.clone()));
+                self.push_event(ShiftClientEvent::FileClosed(file));
             }
 
             (
@@ -254,7 +256,7 @@ impl<'a> Client<'a> {
                 let file = file.clone();
                 let transfer = transfer.clone();
                 self.transition(State::InboundTransfer(transfer, None));
-                self.push_event(ClientEvent::FileClosed(file));
+                self.push_event(ShiftClientEvent::FileClosed(file));
             }
 
             (
@@ -267,7 +269,7 @@ impl<'a> Client<'a> {
                 self.transition(State::Idle);
                 self.writer
                     .write(Content::CloseTransfer(api::CloseTransfer {}))?;
-                self.push_event(ClientEvent::TransferClosed);
+                self.push_event(ShiftClientEvent::TransferClosed);
             }
 
             (
@@ -278,7 +280,7 @@ impl<'a> Client<'a> {
                 Input::IncomingMessage(Content::CloseTransfer(_)),
             ) => {
                 self.transition(State::Idle);
-                self.push_event(ClientEvent::TransferClosed);
+                self.push_event(ShiftClientEvent::TransferClosed);
             }
 
             (
@@ -292,17 +294,17 @@ impl<'a> Client<'a> {
             (_, input) => {
                 bail!(ClientError::InvalidTransitionError {
                     state: self.state.clone(),
-                    input: input,
+                    input,
                 });
             }
         }
         Ok(())
     }
 
-    pub fn take_events(&mut self) -> Vec<ClientEvent> {
+    pub fn take_events(&mut self) -> Vec<ShiftClientEvent> {
         let mut events = vec![];
         std::mem::swap(&mut self.events, &mut events);
-        return events;
+        events
     }
 
     pub fn start(&mut self) -> Result<()> {

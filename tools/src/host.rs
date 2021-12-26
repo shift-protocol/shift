@@ -2,7 +2,6 @@ use anyhow::{anyhow, Result};
 use cancellation::*;
 use clap::{self, Parser};
 use colored::*;
-use ctrlc;
 use path_clean::PathClean;
 use portable_pty::{native_pty_system, CommandBuilder, PtyPair, PtySize};
 use std::io::{self, Read, Write};
@@ -13,13 +12,11 @@ use terminal_size::{terminal_size, Height, Width};
 
 use shift::api;
 use shift::pty::{enable_raw_mode, restore_mode};
-
-mod file_client;
-use file_client::{FileClient, FileClientDelegate};
+use shift_fileclient::{ShiftFileClient, ShiftFileClientDelegate};
 
 #[derive(Parser, Debug)]
 #[clap(version)]
-struct Cli {
+pub struct Cli {
     #[clap(short, long)]
     directory: String,
 
@@ -27,10 +24,10 @@ struct Cli {
     args: Vec<String>,
 }
 
-struct App<'a> {
+pub struct App<'a> {
     pty: Option<PtyPair>,
     work_dir: String,
-    client: Arc<Mutex<FileClient<'a>>>,
+    client: Arc<Mutex<ShiftFileClient<'a>>>,
     old_mode: termios::Termios,
     cancellation_token_source: CancellationTokenSource,
 
@@ -94,8 +91,7 @@ impl<'a> App<'a> {
         let mut _self = Self {
             pty: Some(pty_pair),
             work_dir: args.directory,
-            client: Arc::new(Mutex::new(FileClient::new(
-                "server".to_string(),
+            client: Arc::new(Mutex::new(ShiftFileClient::new(
                 Box::new(writer),
                 Some(Box::new(io::stdout())),
             ))),
@@ -151,10 +147,10 @@ fn resize_pty(pty: &PtyPair) -> Result<()> {
     Ok(())
 }
 
-impl<'a> FileClientDelegate<'a> for App<'a> {
+impl<'a> ShiftFileClientDelegate<'a> for App<'a> {
     fn on_inbound_transfer_request(&mut self, request: &api::SendRequest) -> bool {
         self.current_inbound_transfer = Some(request.clone());
-        return true;
+        true
     }
 
     fn on_inbound_transfer_file(&mut self, file: &api::OpenFile) -> Result<Option<PathBuf>> {
@@ -175,13 +171,13 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
         .clean();
         let path = PathBuf::from(&self.work_dir).join(rel_path);
         std::fs::create_dir_all(path.parent().expect("Cannot handle root directory"))?;
-        return Ok(Some(path));
+        Ok(Some(path))
     }
 
     fn on_outbound_transfer_request(
         &mut self,
         _request: &api::ReceiveRequest,
-        client: &mut FileClient<'a>,
+        client: &mut ShiftFileClient<'a>,
     ) -> Result<()> {
         let path = Path::new(&self.work_dir);
         let item = path.read_dir()?.next();
@@ -190,7 +186,7 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
                 client.send(&item?.path(), Box::new(|_, _, _| {}))?;
             }
             None => {
-                println!("[server]: {}", "No files to send".green());
+                println!("[host]: {}", "No files to send".green());
                 client.disconnect()?;
             }
         }
@@ -204,10 +200,4 @@ impl<'a> FileClientDelegate<'a> for App<'a> {
     fn on_disconnect(&mut self) -> Result<()> {
         self.stop()
     }
-}
-
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-    App::new(cli)?.run()?;
-    Ok(())
 }

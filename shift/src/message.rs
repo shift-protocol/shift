@@ -8,21 +8,22 @@ use super::transport::{
     TransportConfig, TransportFeeder, TransportOutput, TransportReader, TransportWriter,
 };
 
-fn decode_from(output: Vec<TransportOutput>) -> Vec<MessageOutput> {
-    let mut result = vec![];
-    for part in output {
-        match part {
-            TransportOutput::Passthrough(data) => result.push(MessageOutput::Passthrough(data)),
-            TransportOutput::Packet(data) => {
-                if let Some(msg) = api::Message::decode(data).ok() {
-                    if let Some(content) = msg.content {
-                        result.push(MessageOutput::Message(content));
-                    }
+fn decode(output: TransportOutput) -> Option<MessageOutput> {
+    match output {
+        TransportOutput::Passthrough(data) => return Some(MessageOutput::Passthrough(data)),
+        TransportOutput::Packet(data) => {
+            if let Ok(msg) = api::Message::decode(data) {
+                if let Some(content) = msg.content {
+                    return Some(MessageOutput::Message(content));
                 }
             }
         }
     }
-    result
+    None
+}
+
+fn decode_from(output: Vec<TransportOutput>) -> Vec<MessageOutput> {
+    output.into_iter().filter_map(decode).collect()
 }
 
 #[derive(Debug)]
@@ -55,15 +56,7 @@ impl<'a> Iterator for MessageFeeder<'a> {
     type Item = MessageOutput;
 
     fn next(&mut self) -> Option<MessageOutput> {
-        match self.feeder.next() {
-            None => return None,
-            Some(item) => {
-                for output in decode_from(vec![item]) {
-                    return Some(output);
-                }
-                None
-            }
-        }
+        self.feeder.next().and_then(decode)
     }
 }
 
@@ -74,7 +67,7 @@ impl<'a> MessageReader<'a> {
         }
     }
 
-    pub fn feed<'b>(&mut self, data: &'b [u8]) -> Vec<MessageOutput> {
+    pub fn feed(&mut self, data: &[u8]) -> Vec<MessageOutput> {
         let output = self.reader.feed(data);
         decode_from(output)
     }
@@ -84,7 +77,7 @@ impl<'a> MessageReader<'a> {
         stream: &'a mut dyn Read,
         ct: &'a CancellationToken,
     ) -> MessageFeeder<'a> {
-        return MessageFeeder::new(&mut self.reader, stream, ct);
+        MessageFeeder::new(&mut self.reader, stream, ct)
     }
 }
 

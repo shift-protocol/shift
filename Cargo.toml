@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "shift",
+    "shift-fileclient",
     "tools",
 ]
 
