@@ -26,7 +26,7 @@ fn test_reader_single() {
 }
 
 #[test]
-fn test_reader_split() {
+fn test_reader_split_body() {
     let mut reader = TransportReader::new(TRANSPORT);
     assert_eq!(reader.feed(TRANSPORT.prefix).len(), 0);
     assert_eq!(reader.feed("dGVzdH".as_bytes()).len(), 0);
@@ -54,4 +54,28 @@ fn test_reader_mutiple() {
     buf.extend(TRANSPORT.suffix);
     let result = reader.feed(&buf);
     assert_eq!(result[0], TransportOutput::Packet(Bytes::from("test")));
+}
+
+#[test]
+fn test_reader_split_prefix() {
+    let mut reader = TransportReader::new(TRANSPORT);
+    let result = reader
+        .feed("passthrough".as_bytes())
+        .into_iter()
+        .chain(reader.feed(&TRANSPORT.prefix[..3]).into_iter())
+        .chain(reader.feed(&TRANSPORT.prefix[3..]).into_iter())
+        .chain(reader.feed("dGVzdA==".as_bytes()).into_iter())
+        .chain(reader.feed(TRANSPORT.suffix).into_iter())
+        .chain(reader.feed("passthrough".as_bytes()).into_iter())
+        .collect::<Vec<_>>();
+    assert_eq!(result.len(), 3);
+    assert_eq!(
+        result[0],
+        TransportOutput::Passthrough(Bytes::from("passthrough"))
+    );
+    assert_eq!(result[1], TransportOutput::Packet(Bytes::from("test")));
+    assert_eq!(
+        result[2],
+        TransportOutput::Passthrough(Bytes::from("passthrough"))
+    );
 }

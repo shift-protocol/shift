@@ -10,8 +10,7 @@ pub struct TransportConfig<'a> {
 
 pub struct TransportReader<'a> {
     config: TransportConfig<'a>,
-    buffer: Vec<u8>,
-    in_sequence: bool,
+    buffer: BytesMut,
 }
 
 #[derive(Debug, PartialEq)]
@@ -68,17 +67,11 @@ impl<'a> Iterator for TransportFeeder<'a> {
     }
 }
 
-enum RemainderFeedResult {
-    PacketParsed { packet: Bytes, rest: Bytes },
-    Buffered,
-}
-
 impl<'a> TransportReader<'a> {
     pub fn new(config: TransportConfig<'a>) -> Self {
         Self {
-            buffer: vec![],
+            buffer: BytesMut::new(),
             config,
-            in_sequence: false,
         }
     }
 
@@ -91,73 +84,56 @@ impl<'a> TransportReader<'a> {
     }
 
     pub fn feed(&mut self, data: &[u8]) -> Vec<TransportOutput> {
-        let mut remaining_data = Bytes::from(BytesMut::from(data));
+        self.buffer.extend_from_slice(data);
         let mut result = vec![];
-        if self.in_sequence {
-            match self.feed_remainder(&remaining_data) {
-                RemainderFeedResult::Buffered => {
-                    return result;
-                }
-                RemainderFeedResult::PacketParsed { packet, rest } => {
-                    result.push(TransportOutput::Packet(packet));
-                    remaining_data = rest;
-                }
+
+        'outer: loop {
+            if self.buffer.is_empty() {
+                break;
             }
-        }
 
-        loop {
-            match twoway::find_bytes(&remaining_data, self.config.prefix) {
+            match twoway::find_bytes(&self.buffer, self.config.prefix) {
+                Some(0) => match twoway::find_bytes(&self.buffer, self.config.suffix) {
+                    Some(end_index) => {
+                        let content = self
+                            .buffer
+                            .split_to(end_index + self.config.suffix.len())
+                            .split_to(end_index)
+                            .split_off(self.config.prefix.len());
+                        if let Ok(content) = base64::decode(content) {
+                            result.push(TransportOutput::Packet(Bytes::from(content)));
+                        }
+                        continue;
+                    }
+                    None => {
+                        break;
+                    }
+                },
                 Some(start_index) => {
-                    if start_index > 0 {
-                        result.push(TransportOutput::Passthrough(
-                            remaining_data.slice(..start_index).clone(),
-                        ));
-                    }
-                    remaining_data = remaining_data.slice(start_index + self.config.prefix.len()..);
-
-                    match self.feed_remainder(&remaining_data) {
-                        RemainderFeedResult::Buffered => {
-                            break;
-                        }
-                        RemainderFeedResult::PacketParsed { packet, rest } => {
-                            result.push(TransportOutput::Packet(packet));
-                            remaining_data = rest;
-                        }
-                    }
+                    let passthrough = self.buffer.split_to(start_index);
+                    result.push(TransportOutput::Passthrough(passthrough.freeze()));
+                    continue;
                 }
                 None => {
-                    if !remaining_data.is_empty() {
-                        result.push(TransportOutput::Passthrough(remaining_data));
+                    for prefix_len in
+                        1..=std::cmp::min(self.buffer.len(), self.config.prefix.len() - 1)
+                    {
+                        if self.buffer[self.buffer.len() - prefix_len..]
+                            == self.config.prefix[..prefix_len]
+                        {
+                            // Could potentially be a prefix of the transport prefix
+                            break 'outer;
+                        }
                     }
+                    let mut buf = BytesMut::new();
+                    std::mem::swap(&mut self.buffer, &mut buf);
+                    result.push(TransportOutput::Passthrough(buf.freeze()));
                     break;
                 }
             }
         }
 
         result
-    }
-
-    fn feed_remainder(&mut self, data: &Bytes) -> RemainderFeedResult {
-        match twoway::find_bytes(data, self.config.suffix) {
-            Some(length) => {
-                self.buffer.extend_from_slice(&data[..length]);
-                let mut packet = Bytes::new();
-                if let Ok(content) = base64::decode(&self.buffer) {
-                    packet = Bytes::from(content);
-                }
-                self.buffer = vec![];
-                self.in_sequence = false;
-                RemainderFeedResult::PacketParsed {
-                    packet,
-                    rest: data.slice(length + self.config.suffix.len()..),
-                }
-            }
-            None => {
-                self.in_sequence = true;
-                self.buffer.extend_from_slice(data);
-                RemainderFeedResult::Buffered
-            }
-        }
     }
 }
 
