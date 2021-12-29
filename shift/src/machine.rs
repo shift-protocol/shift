@@ -18,6 +18,7 @@ pub enum Input {
     OpenFile(api::OpenFile),
     ConfirmFileOpened(api::FileOpened),
     SendChunk(api::Chunk),
+    AcknowledgeChunk,
     CloseFile,
     CloseTransfer,
     Disconnect,
@@ -241,6 +242,11 @@ impl<'a> ShiftClient<'a> {
                 self.push_event(ShiftClientEvent::Chunk(chunk));
             }
 
+            (State::InboundFileTransfer(_, _), Input::AcknowledgeChunk) => {
+                self.writer
+                    .write(Content::AcknowledgeChunk(api::AcknowledgeChunk {}))?;
+            }
+
             (State::OutboundFileTransfer(transfer, Some(file)), Input::CloseFile) => {
                 let transfer = transfer.clone();
                 let file = file.clone();
@@ -345,6 +351,10 @@ impl<'a> ShiftClient<'a> {
 
     pub fn send_chunk(&mut self, chunk: api::Chunk) -> Result<()> {
         self.consume(Input::SendChunk(chunk))
+    }
+
+    pub fn acknolwedge_chunk(&mut self) -> Result<()> {
+        self.consume(Input::AcknowledgeChunk)
     }
 
     pub fn close_file(&mut self) -> Result<()> {

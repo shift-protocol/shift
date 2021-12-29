@@ -103,20 +103,23 @@ impl<'a> ShiftFileClient<'a> {
             self.client.lock().unwrap().start()?;
         }
 
-        let input_closed = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
 
-        crossbeam::scope(|scope| -> Result<()> {
+        let loop_result = crossbeam::scope(|scope| -> Result<()> {
             let (tx, rx) = std::sync::mpsc::channel();
 
             let reader_thread = scope.spawn({
                 let client = self.client.clone();
                 let mut output = self.output.take();
-                let input_closed = input_closed.clone();
+                let stop = stop.clone();
                 let tx = tx.clone();
                 move |_| -> Result<()> {
                     tx.send(0)?;
                     let mut reader = MessageReader::new(TRANSPORT);
                     for msg in reader.feed_from(input, token) {
+                        if stop.load(Ordering::Relaxed) {
+                            break;
+                        }
                         match msg {
                             MessageOutput::Message(msg) => {
                                 client.lock().unwrap().feed_message(msg)?;
@@ -130,20 +133,20 @@ impl<'a> ShiftFileClient<'a> {
                             }
                         }
                     }
-                    input_closed.store(true, Ordering::Relaxed);
+                    stop.store(true, Ordering::Relaxed);
                     tx.send(0)?;
                     Ok(())
                 }
             });
 
-            let loop_result: Result<()> = (|| {
+            (|| {
                 'event_loop: loop {
                     let events = { self.client.lock().unwrap().take_events() };
                     if events.is_empty() {
                         rx.recv()?;
                     }
                     {
-                        if input_closed.load(Ordering::Relaxed) {
+                        if stop.load(Ordering::Relaxed) {
                             break 'event_loop;
                         }
                     }
@@ -164,8 +167,8 @@ impl<'a> ShiftFileClient<'a> {
                                 }
                             }
                             ShiftClientEvent::InboundFileOpening(_, file) => {
-                                match delegate.on_inbound_transfer_file(&file)? {
-                                    Some(path) => {
+                                match delegate.on_inbound_transfer_file(&file) {
+                                    Ok(Some(path)) => {
                                         std::fs::create_dir_all(path.parent().ok_or(anyhow!(
                                             "Cannot operate on filesystem root"
                                         ))?)?;
@@ -199,7 +202,7 @@ impl<'a> ShiftFileClient<'a> {
                                             self.open_file = Some(file);
                                         }
                                     }
-                                    None => {
+                                    Ok(None) | Err(_) => {
                                         self.client.lock().unwrap().close_transfer()?;
                                     }
                                 }
@@ -208,8 +211,21 @@ impl<'a> ShiftFileClient<'a> {
                                 delegate.on_outbound_transfer_request(&request, self)?;
                             }
                             ShiftClientEvent::Chunk(chunk) => {
+                                println!(
+                                    "chynk len {:?} for {:?}",
+                                    chunk.data.len(),
+                                    self.open_file.is_some()
+                                );
                                 if let Some(file) = &mut self.open_file {
+                                    let position = file.seek(SeekFrom::Current(0))?;
+                                    if position != chunk.offset {
+                                        return Err(anyhow!(
+                                            "Chunk offset does not match file position"
+                                        ));
+                                    }
                                     file.write_all(&chunk.data)?;
+                                    self.client.lock().unwrap().acknolwedge_chunk()?;
+                                    println!("now at {:?}", position);
                                 }
                             }
                             ShiftClientEvent::TransferAccepted() => {
@@ -263,6 +279,11 @@ impl<'a> ShiftFileClient<'a> {
                                 });
                             }
                             ShiftClientEvent::FileClosed(f) => {
+                                if let Some(file) = &mut self.open_file {
+                                    // file.flush()?;
+                                    // file.sync_all()?;
+                                    println!("now at {:?}", file.seek(SeekFrom::Current(0)));
+                                }
                                 self.open_file = None;
                                 self.total_bytes_sent += f.info.size;
                                 self.maybe_send_next_file()?;
@@ -281,13 +302,18 @@ impl<'a> ShiftFileClient<'a> {
                 }
 
                 Ok(())
-            })();
-            loop_result.expect("Event loop error");
+            })()
+            .map_err(|e| {
+                stop.store(true, Ordering::Relaxed);
+                e
+            })?;
 
             reader_thread.join().expect("Failure in reader thread")?;
             Ok(())
-        })
-        .unwrap()?;
+        });
+
+        loop_result.map_err(|_| anyhow!("Panic in a service thread"))??;
+
         Ok(())
     }
 
@@ -327,6 +353,7 @@ impl<'a> ShiftFileClient<'a> {
             .unwrap()
             .request_inbound_transfer(api::ReceiveRequest {
                 allow_directories: false,
+                allow_multiple: true,
             })
     }
 

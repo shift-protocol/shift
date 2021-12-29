@@ -3,8 +3,8 @@ use cancellation::*;
 use clap::{self, AppSettings, Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use path_clean::PathClean;
-use shift::api;
 use shift::pty::{enable_raw_mode, restore_mode};
+use shift::{api, MessageWriter, ShiftClient, TransportWriter, TRANSPORT};
 use shift_fileclient::{ShiftFileClient, ShiftFileClientDelegate};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -155,14 +155,30 @@ impl<'a> ShiftFileClientDelegate<'a> for App<'a> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let old_mode = enable_raw_mode(0)?;
+    let old_mode = enable_raw_mode(0).ok();
+    let abort = move || {
+        if let Some(old_mode) = old_mode {
+            restore_mode(0, old_mode).expect("Failed to restore TTY mode");
+        }
+        let _ = ShiftClient::new(MessageWriter::new(TransportWriter::new(
+            TRANSPORT,
+            Box::new(std::io::stdout()),
+        )))
+        .disconnect();
+    };
+
     ctrlc::set_handler(move || {
-        restore_mode(0, old_mode).expect("Failed to restore TTY mode");
+        abort();
         std::process::exit(1);
     })?;
 
-    App::new(cli).run()?;
+    App::new(cli).run().unwrap_or_else(|e| {
+        abort();
+        panic!("{}", e);
+    });
 
-    restore_mode(0, old_mode)?;
+    if let Some(old_mode) = old_mode {
+        restore_mode(0, old_mode)?;
+    }
     Ok(())
 }
